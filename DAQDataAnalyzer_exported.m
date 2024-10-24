@@ -21,12 +21,6 @@ classdef DAQDataAnalyzer_exported < matlab.apps.AppBase
         STDEditField                 matlab.ui.control.NumericEditField
         SavingDataSwitchLabel        matlab.ui.control.Label
         SavingDataSwitch             matlab.ui.control.Switch
-        Panel3                       matlab.ui.container.Panel
-        StartOptButton               matlab.ui.control.StateButton
-        XYRangeEditFieldLabel        matlab.ui.control.Label
-        XYRangeEditField             matlab.ui.control.NumericEditField
-        ZRangeEditFieldLabel         matlab.ui.control.Label
-        ZRangeEditField              matlab.ui.control.NumericEditField
         Panel4                       matlab.ui.container.Panel
         ScanButton                   matlab.ui.control.Button
         ScanSizeumEditFieldLabel     matlab.ui.control.Label
@@ -83,7 +77,6 @@ classdef DAQDataAnalyzer_exported < matlab.apps.AppBase
         YcoordEditField              matlab.ui.control.NumericEditField
         ZcoordEditFieldLabel         matlab.ui.control.Label
         ZcoordEditField              matlab.ui.control.NumericEditField
-        StartTraceCtr2Button         matlab.ui.control.Button
         Panel7                       matlab.ui.container.Panel
         LoadFigureButton             matlab.ui.control.Button
         SetoffsetButton              matlab.ui.control.StateButton
@@ -98,33 +91,49 @@ classdef DAQDataAnalyzer_exported < matlab.apps.AppBase
         ZoomSizeumEditFieldLabel     matlab.ui.control.Label
         ZoomSizeumEditField          matlab.ui.control.NumericEditField
         CleanFigButton               matlab.ui.control.StateButton
+        Panel3                       matlab.ui.container.Panel
+        TrackerSwitchLabel           matlab.ui.control.Label
+        TrackerSwitch                matlab.ui.control.Switch
+        StartOptButton               matlab.ui.control.StateButton
+        XYRangeEditFieldLabel        matlab.ui.control.Label
+        XYRangeEditField             matlab.ui.control.NumericEditField
+        ZRangeEditFieldLabel         matlab.ui.control.Label
+        ZRangeEditField              matlab.ui.control.NumericEditField
     end
 
     
 properties (Access = private)
         DAQSession = [] % Handle to DAQ session
         
-        DAQSessionCtr2 = [] % Handle to DAQ session
-        
         DAQClkTraceSession = [] % Handle to DAQ session
         
+        
+        DAQTrazaScan = [] % sesion de traza a ejecutar durante scan
+        trazaScanListener = [];
+        traceScanFigure % Handle a figura externa que plotea la traza
+        axesScanTrace % Handle de los ejes de figura que plotea traza
+        lineScanTrace % Handle a la linea del gráfico
+        DataFIFOBufferTrazaScan
+        TimestampsFIFOBufferTrazaScan
+        
         TraceAvailableListener % Listener for DAQ session 'DataAvailable' event
-        TraceAvailableListenerCtr2
+        
         
         TimestampsFIFOBuffer % Timestamps FIFO buffer used for live plot of latest "N" seconds of acquired data
         
         DataFIFOBuffer  % Data FIFO buffer used for live plot of latest "N" seconds of acquired data
         
-        DataFIFOBufferCtr2
-        TimestampsFIFOBufferCtr2
-        
         traceFigure % Handle a figura externa que plotea la traza
         axesTrace % Handle de los ejes de figura que plotea traza
         lineTrace % Handle a la linea del gráfico
         
-        traceFigureCtr2
-        axesTraceCtr2
-        lineTraceCtr2
+        % VARIABLES PARA SINCRONIZAR OPTIMIZACION
+        acumularCtas = false; % Bandera lógica para dar paso a optimizacion
+        ctasAcumuladasOpt = []; % variable para acumular cuentas
+        
+        trackerReady = false; % Verifica que este calculado el promedio para trackear
+        
+        %========================================
         
         LogRequested % Logical value, indicates whether user selected to log data to file from the UI (set by LogdatatofileSwitch)
         LogSaveScan % Valor booleano para guardar datos tomados del scan
@@ -136,7 +145,7 @@ properties (Access = private)
         
         % Propiedades asociadas a mapa PL
         
-        DAQPiezoSession = [] % Sesion para manejar entradas y salidas de voltaje en piezo
+        
         DAQScanSession = [] % Sesion para realizar scan
         scanListener = [];
         
@@ -199,6 +208,11 @@ properties (Access = private)
         %  If data logging option is selected in the UI, it also writes data to a
         %  binary file.
         
+        
+%         if app.acumularCtas
+%             app.ctasAcumuladasOpt = [app.ctasAcumuladasOpt; event.Data(:,1)];
+%         end
+        
             if app.LogRequested
                 % If Log data to file switch is on
                 data = [event.TimeStamps, event.Data]' ;
@@ -217,14 +231,49 @@ properties (Access = private)
             
             data = mean(diff(event.Data(:,1)))/(2*dT);
             
+            if app.acumularCtas
+                app.ctasAcumuladasOpt = [app.ctasAcumuladasOpt; data];
+            end
+            
+            
             app.DataFIFOBuffer = storeDataInFIFO(app, app.DataFIFOBuffer, buffersize, data);
+            
             if numel(app.DataFIFOBuffer) == buffersize
                 app.MeanEditField.Value = mean(app.DataFIFOBuffer(1:end));
                 app.STDEditField.Value = std(app.DataFIFOBuffer(1:end));
+                
+            end
+            
+            if (app.trackerReady && (numel(app.DataFIFOBuffer) == buffersize) && (app.MeanEditField.Value < app.MeanEditField.Value*0.7))
+                
+                StartOptButtonValueChanged(app, event);
+                app.DataFIFOBuffer = [app.DataFIFOBuffer(end)];
+                
             end
             
             % Update plot data
             set(app.lineTrace ,'YData', app.DataFIFOBuffer);
+            drawnow limitrate;
+            
+        end
+        
+        function trazaScanCallback(app, ~, event)
+        
+            % Store continuous acquisition data in FIFO data buffers
+            buffersize = round(abs(app.NBufferEditField.Value));
+            
+            % Definir variables que determinan tiempo de integración
+            timeMs = 2;
+            dT = timeMs/(1000*2);
+            
+            data = mean(diff(event.Data(:,1)))/(2*dT);
+            
+            
+            app.DataFIFOBufferTrazaScan = storeDataInFIFO(app, app.DataFIFOBufferTrazaScan, buffersize, data);
+            
+            
+            % Update plot data
+            set(app.lineScanTrace ,'YData', app.DataFIFOBufferTrazaScan);
             drawnow limitrate;
             
         end
@@ -709,12 +758,10 @@ properties (Access = private)
                         % Acquisition is currently on
                         stop(app.DAQSession)
                         stop(app.DAQClkTraceSession)
-                        stop(app.DAQPiezoSession)
                         stop(app.DAQScanSession)
                         delete(app.TraceAvailableListener)
                         delete(app.DAQSession)
                         delete(app.DAQClkTraceSession)
-                        delete(app.DAQPiezoSession)
                         delete(app.DAQScanSession)
 
                         
@@ -754,25 +801,16 @@ properties (Access = private)
         
         % Función que lee y actualiza voltajes del piezo
         
-        function updatePiezoVoltage(app, sesion)
+        function updatePiezoVoltage(app)
             
             % Leer voltajes
-            switch sesion
-                case 'piezo'
-                    voltajes = inputSingleScan(app.DAQPiezoSession);
-                    % Asignar voltajes leidos a variables de clase
-                    
-                    app.currentVoltX = recortarVoltaje(app, voltajes(1), 0.0, 10.0);
-                    app.currentVoltY = recortarVoltaje(app, voltajes(2), 0.0, 10.0);
-                    app.currentVoltZ = recortarVoltaje(app, voltajes(3), 0.0, 10.0);
-                    
-                case 'scan'
-                    voltajes = inputSingleScan(app.DAQScanSession);
-                    % Asignar voltajes leidos a variables de clase
-                    
-                    app.currentVoltX = recortarVoltaje(app, voltajes(2), 0.0, 10.0);
-                    app.currentVoltY = recortarVoltaje(app, voltajes(3), 0.0, 10.0);
-            end
+            
+            voltajes = inputSingleScan(app.DAQScanSession);
+            % Asignar voltajes leidos a variables de clase
+            
+            app.currentVoltX = recortarVoltaje(app, voltajes(2), 0.0, 10.0);
+            app.currentVoltY = recortarVoltaje(app, voltajes(3), 0.0, 10.0);
+            
             
             
             
@@ -976,14 +1014,11 @@ properties (Access = private)
         
         % Desplaza el piezo de un punto a otro
         
-        function desplazar(app, sesion)
+        function desplazarScan(app)
             
-            switch sesion
-                case 'piezo'
-                    s = app.DAQPiezoSession;
-                case 'scan'
-                    s = app.DAQScanSession;
-            end
+            
+            s = app.DAQScanSession;
+            
             
             if ~(isempty(s))
                 % Crear vector con voltajes iniciales actuales y voltajes
@@ -1032,16 +1067,8 @@ properties (Access = private)
                 end
                 
             else
-                
-                switch sesion
-                    case 'piezo'
-                        iniciarSesionPiezo(app)
-                        desplazar(app, 'piezo')
-                    case 'scan'
-                        iniciarSesionScan(app)
-                        desplazar(app, 'scan')
-                end
-                
+                iniciarSesionScan(app)
+                desplazarScan(app)
             end
             
         end
@@ -1104,7 +1131,7 @@ properties (Access = private)
                 
                 % Eliminar herramientas específicas
                 delete(tb.Children);
-                
+                figure
                 imagesc(app.countsMatrix)
                 disp(app.countsMatrix)
                 setAppViewState(app, 'scannerFinished')
@@ -1180,6 +1207,7 @@ properties (Access = private)
             end
             
         end
+
         
         function iniciarSesionTraza(app)
             
@@ -1231,91 +1259,7 @@ properties (Access = private)
             
         end
         
-        function iniciarSesionTrazaCtr2(app)
-            
-            if ~(isempty(app.DAQScanSession))
-                
-                % Si hay una sesion asociada al scan estará usando los
-                % canales de la traza. 
-                
-                stop(app.DAQScanSession)
-                release(app.DAQScanSession)
-                delete(app.DAQScanSession)
-                
-                % Eliminar listener
-                delete(app.TraceAvailableListener);
-                app.TraceAvailableListener = [];
-                
-                app.DAQScanSession = [];
-                
-                iniciarSesionTrazaCtr2(app)
-                
-            else
-                %Crear sesion principal para adquisición de cuentas
-                s_in = daq.createSession('ni');
-                
-                % Agregar un canal de entrada para contador
-                addCounterInputChannel(s_in, 'Dev1', 'ctr1', 'EdgeCount');
-                
-                % Configurar reloj para medir traza
-                iniciarSesionReloj(app, 'traza')
-                
-                % Agregar reloj a sesion de traza
-                s_in.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
-                
-                % Configurar la tasa de muestreo igual a frec. del reloj
-                s_in.Rate = app.DAQClkTraceSession.Channels.Frequency;
-                
-                % Recibir datos de manera continua
-                s_in.IsContinuous = true;
-                
-                % Configurar cantidad de datos para llamar al listener
-                s_in.NotifyWhenDataAvailableExceeds = app.NotifyScansSpinner.Value;
-                
-                % Guardar sesion como variable de la clase
-                app.DAQSessionCtr2 = s_in;
-                
-                % Inicializar listener como arreglo vacío.
-                app.TraceAvailableListenerCtr2 = [];
-            end
-            
-        end
         
-        function iniciarSesionPiezo(app)
-            
-            if ~(isempty(app.DAQScanSession))
-                
-                % Si hay una sesion asociada al scan estará usando los
-                % canales del piezo. 
-                
-                stop(app.DAQScanSession)
-                release(app.DAQScanSession)
-                delete(app.DAQScanSession)
-                
-                app.DAQScanSession = [];
-                
-                iniciarSesionPiezo(app)
-                
-            else
-                % Crear sesion para entrada y salida de voltajes en piezo
-                s = daq.createSession('ni');
-                
-                % El orden de las coordenadas va como X, Y, Z.
-                % Crear salidas analógicas
-                addAnalogOutputChannel(s, 'Dev1', 'ao0', 'Voltage');
-                addAnalogOutputChannel(s, 'Dev1', 'ao1', 'Voltage');
-                addAnalogOutputChannel(s, 'Dev1', 'ao2', 'Voltage');
-                
-                % Agregar entradas analógicas
-                addAnalogInputChannel(s, 'Dev1', 'ai0', 'Voltage');
-                addAnalogInputChannel(s, 'Dev1', 'ai4', 'Voltage');
-                addAnalogInputChannel(s, 'Dev1', 'ai16', 'Voltage');
-                
-                
-                % Guardar session como variable de clase
-                app.DAQPiezoSession = s;
-            end
-        end
         
         function iniciarSesionScan(app)
             
@@ -1391,6 +1335,56 @@ properties (Access = private)
             
         end
         
+        function iniciarTrazaScan(app)
+            if ~(isempty(app.DAQTrazaScan))
+                
+                % Si hay una sesion asociada al scan estará usando los
+                % canales de la traza. 
+                
+                stop(app.DAQTrazaScan)
+                release(app.DAQTrazaScan)
+                delete(app.DAQTrazaScan)
+                
+                % Eliminar listener
+                delete(app.trazaScanListener);
+                app.trazaScanListener = [];
+                
+                app.DAQTrazaScan = [];
+                
+                iniciarTrazaScan(app)
+                
+            else
+                %Crear sesion principal para adquisición de cuentas
+                s_in = daq.createSession('ni');
+                
+                % Agregar un canal de entrada para contador
+                addCounterInputChannel(s_in, 'Dev1', 'ctr2', 'EdgeCount');
+                
+                % Configurar reloj para medir traza
+                iniciarSesionReloj(app, 'traza')
+                
+                % Agregar reloj a sesion de traza
+                s_in.addClockConnection('External', 'Dev1/PFI7', 'ScanClock');
+                
+                % Configurar la tasa de muestreo igual a frec. del reloj
+                frecGenerador = 5E2;
+                s_in.Rate = frecGenerador;
+                
+                % Recibir datos de manera continua
+                s_in.IsContinuous = true;
+                
+                % Configurar cantidad de datos para llamar al listener
+                s_in.NotifyWhenDataAvailableExceeds = app.NotifyScansSpinner.Value;
+                
+                % Guardar sesion como variable de la clase
+                app.DAQTrazaScan = s_in;
+                
+                
+                % Inicializar listener como arreglo vacío.
+                app.trazaScanListener = [];
+            end
+        end
+        
         
         function actualizarCountdown(app)
             
@@ -1413,6 +1407,8 @@ properties (Access = private)
         %%%%%%%%%%%% F U N C I O N E S  D E S A C O P L E %%%%%%%%%%%%%%%%%%%%%%%
         
         function iniciarSesionCoordenada(app, valor)
+            
+            
             switch(valor)
                 case 'x'
                     if isempty(app.DAQSesionCoordX)
@@ -1718,10 +1714,10 @@ properties (Access = private)
             %===============================================================
             
             % Crear sesión para generación de pulsos a usar como reloj
-            iniciarSesionReloj(app,'traza')
+            %iniciarSesionReloj(app,'traza')
             
             % Crear sesión para medir la traza
-            iniciarSesionTraza(app)
+            %iniciarSesionTraza(app)
             
             % Crear sesión para manejar piezo
             iniciarSesionCoordenada(app,'x')
@@ -1791,7 +1787,6 @@ properties (Access = private)
                 iniciarSesionReloj(app,'traza')
                 
                 % Crear listener e iniciar en 2do plano sesion de adquisición
-                
                 app.TraceAvailableListener = addlistener(app.DAQSession, 'DataAvailable', ...
                     @(src,event) dataAvailable_Callback(app, src, event));
                 
@@ -2368,7 +2363,8 @@ properties (Access = private)
 
         % Button pushed function: ScanButton
         function ScanButtonPushed(app, event)
-            
+            %============================================================================
+            %============ E L I M I N A R  T R A Z A  P R I N C I P A L =================
             % Eliminar gráfico de traza en caso de que esté abierto
             
             % Setear handles de gráfico de traza a array vacios
@@ -2376,6 +2372,40 @@ properties (Access = private)
             app.traceFigure = [];
             app.axesTrace = [];
             app.lineTrace = [];
+            
+            
+            %======================================================================
+            %================= C R E A R  T R A Z A  S C A N ======================
+            
+            % Setear buffers como arreglos vacíos previo a usarlos
+            app.DataFIFOBufferTrazaScan = [];
+            app.TimestampsFIFOBufferTrazaScan = [];
+            
+            
+            % Crear figura externa a la app para mostrar traza
+            app.traceScanFigure = figure('Name','Traza Scan', 'Position', [100, 100, 800, 600]);
+            
+            % Obtener el handle a los ejes de la figura
+            app.axesScanTrace = axes(app.traceScanFigure);
+            %Hacer plot sin datos
+            app.lineScanTrace = plot(app.axesScanTrace, NaN, 'LineWidth',3,"Color",'k');
+            
+            % Conf. título y etiquetas
+            title(app.axesScanTrace, 'Traza Scan');
+            xlabel(app.axesScanTrace, 'u.a');
+            ylabel(app.axesScanTrace, 'cuentas/s');
+            
+            xlim(app.axesScanTrace,[0, app.NBufferEditField.Value]);
+            set(app.axesScanTrace, 'FontSize', 32);
+            
+            % Iniciar sesion de traza scan
+            iniciarTrazaScan(app)
+            
+            % Crear listener e iniciar en 2do plano sesion de adquisición
+            app.trazaScanListener = addlistener(app.DAQTrazaScan, 'DataAvailable', ...
+                @(src,event) trazaScanCallback(app, src, event));
+            
+            startBackground(app.DAQTrazaScan);
             
             %============================================================================
             %==================== P A R A M E T R O S  S C A N ==========================
@@ -2470,7 +2500,7 @@ properties (Access = private)
             coordFinalY = centroScanY + scanOffset;
             
             % Actualizar voltajes actuales en piezo
-            updatePiezoVoltage(app, 'scan')
+            updatePiezoVoltage(app)
             
             
             
@@ -2496,7 +2526,7 @@ properties (Access = private)
                 disp(4)
                 disp(class(app.DAQScanSession))
                 % Desplazarse a las coordenadas iniciales ingresadas
-                desplazar(app, 'scan')
+                desplazarScan(app)
                 disp(5)
                 disp(class(app.DAQScanSession))
                 
@@ -2589,6 +2619,7 @@ properties (Access = private)
                 
                 queueOutputData(app.DAQScanSession,[outVoltajeX, outVoltajeY]);
                 pause(1)
+                disp("hola")
                 startBackground(app.DAQScanSession);
                 
                 
@@ -2641,8 +2672,25 @@ properties (Access = private)
 
         % Button pushed function: ActPanelButton
         function ActPanelButtonPushed(app, event)
-            if ~(isempty(app.DAQScanSession)) || isempty(app.DAQPiezoSession)
+            if ~(isempty(app.DAQScanSession))
                 
+                %=========================================================================
+                %========== E L I M I N A R   T R A Z A   D E L   S C A N ================
+                % Detener adquisición de datos
+                stop(app.DAQTrazaScan)
+                
+                % Eliminar e inicializar listener a array vacío
+                delete(app.trazaScanListener);
+                app.trazaScanListener = [];
+                
+                % Setear handles de gráfico de traza a array vacios
+                delete(app.traceScanFigure)
+                app.traceScanFigure = [];
+                app.axesScanTrace = [];
+                app.lineScanTrace = [];
+                
+                %====================================================
+                %========== A C T I V A R  P A N E L ================
                 iniciarSesionCoordenada(app,'x')
                 iniciarSesionCoordenada(app,'y')
                 iniciarSesionCoordenada(app,'z')
@@ -2851,7 +2899,7 @@ properties (Access = private)
             coordFinalY = centroScanY + scanOffset;
             
             % Actualizar voltajes actuales en piezo
-            updatePiezoVoltage(app, 'scan')
+            updatePiezoVoltage(app)
             
             % ACTUALIZAR VARIABLES DEL SISTEMA RELACIONADAS AL ZOOM
             app.xOffSetZoom = centroScanX;
@@ -2883,7 +2931,7 @@ properties (Access = private)
                 disp(4)
                 disp(class(app.DAQScanSession))
                 % Desplazarse a las coordenadas iniciales ingresadas
-                desplazar(app, 'scan')
+                desplazarScan(app)
                 disp(5)
                 disp(class(app.DAQScanSession))
                 
@@ -3019,31 +3067,15 @@ properties (Access = private)
         % Value changed function: StartOptButton
         function StartOptButtonValueChanged(app, event)
             
-            % Eliminar gráfico de traza y su sesión
-            %===========================================================
-            % Setear handles de gráfico de traza a array vacios
-            delete(app.traceFigure)
-            app.traceFigure = [];
-            app.axesTrace = [];
-            app.lineTrace = [];
-            
-            % Detener sesion de traza para usar sus canales
-            if ~(isempty(app.DAQSession))
-                
-                stop(app.DAQSession)
-                release(app.DAQSession)
-                delete(app.DAQSession)
-                
-                app.DAQSession = [];
-            end
-            
             % Eliminar ejes gráficos de mapa PL
             delete(app.hXLine)
             delete(app.hYLine)
             %===========================================================
-            close all
+            
             % Verificar que coordenadas esten desacopladas
             if ~(isempty(app.DAQSesionCoordX))
+                
+                disp(app.DAQSesionCoordX.Rate)
                 
                 % Leer voltajes actuales en piezo
                 actualizarVoltajes(app);
@@ -3057,96 +3089,50 @@ properties (Access = private)
                 posicionesX = vectorCoordsOptimiza(app, x, app.XYRangeEditField.Value, 100);
                 posicionesY = vectorCoordsOptimiza(app, y, app.XYRangeEditField.Value, 100);
                 posicionesZ = vectorCoordsOptimiza(app, z, app.ZRangeEditField.Value, 100);
+            
                 
-                % Tiempo en que se mueve el piezo
-                settlingTime = (app.StimemsEditField.Value)/1000;
-                
-                % Tiempo durante el cual se considerarán cuentas válidas
-                integrationTime = (app.CtimemsEditField.Value)/1000;
-                
-                % Cantidad de elementos con voltaje constante
-                constVoltIntervalo = int64(app.ScanFreqEditField.Value * (settlingTime + integrationTime));
-                
-                % Elementos a considerar en settling time
-                intervaloSetPiezo = app.ScanFreqEditField.Value * settlingTime;
-                
-                
+                assignin("base",'posicionesX', posicionesX)
                 
                 
                 %=========================================================================
                 %============================= O P T .  X ================================
                 
                 % Voltajes de salida
-                outVoltX = repelem(posicionesX*0.125, constVoltIntervalo);
+                outVoltX = posicionesX*0.125;
+                
+                assignin('base',"outVoltX",outVoltX)
                 
                 % Mover el piezo en la coordenada X al punto de partida
                 app.voltX = outVoltX(1);
                 desplazarCoordenada(app,'x')
                 
-                % Detener sesión en X para agregar contador
+                % Configurar rate
+                rateTrazaEff = app.IntTimemsEditField.Value/1000 * app.NotifyScansSpinner.Value;
                 stop(app.DAQSesionCoordX)
-                release(app.DAQSesionCoordX)
-                delete(app.DAQSesionCoordX)
+                app.DAQSesionCoordX.Rate = ceil(1/rateTrazaEff);
+                disp(app.DAQSesionCoordX.Rate)
+                % Configurar acumulacion de cuentas
+                app.acumularCtas = true;
                 
-                app.DAQSesionCoordX = [];
-                
-                % Iniciar sesion en coordenada X
-                sX = daq.createSession('ni');
-                addAnalogOutputChannel(sX, 'Dev1', 'ao0', 'Voltage');
-                addAnalogInputChannel(sX, 'Dev1', 'ai0', 'Voltage');
-               
-                % Agregar un canal de entrada para contador
-                addCounterInputChannel(sX, 'Dev1', 'ctr0', 'EdgeCount');
-                
-                % Configurar la tasa de muestreo igual a frec. del reloj
-                sX.Rate = app.ScanFreqEditField.Value;
-                
-                % Recibir datos en un tiempo determinado
-                sX.IsContinuous = false;
-                
-                % Poner voltajes a la cola
-                queueOutputData(sX, outVoltX);
                 
                 % Mover piezo y recibir cuentas
-                [data, ~] = sX.startForeground();
+                queueOutputData(app.DAQSesionCoordX,outVoltX)
+                app.DAQSesionCoordX.startForeground();
+                app.acumularCtas = false;
                 
-                % Indices donde se consideran cuentas
-                initCtasX = (intervaloSetPiezo:constVoltIntervalo:length(outVoltX))';
-                finCtasX = (constVoltIntervalo-1:constVoltIntervalo:length(outVoltX))';
-                
-                idxCtasX = [initCtasX finCtasX];
-                
-                clear initCtasX finCtasX;
-                
-                % Derivar cuentas brutas
-                data = diff(data(:,2));
-                
-                % Definir vector para almacenar cuentas
-                cuentasX = zeros(length(posicionesX),1);
-                
-                for i=1:length(idxCtasX)
-                    cuentasX(i) = sum(  data(idxCtasX(i,1):idxCtasX(i,2))  )/integrationTime;
-                end
-                
-                clear idxCtasX data;
-                
-                assignin('base','ctasX',cuentasX)
+                % Descartar primeras 50 cuentas
+                %app.ctasAcumOpt = app.ctasAcumOpt(51:end);
+                % Guardar cuentas en workspace
+                assignin('base','ctasAcumuladasX',app.ctasAcumuladasOpt);
                 
                 % Obtener posición y anchura ajustadas
+                disp(length(app.ctasAcumuladasOpt)-length(posicionesX)+1)
+                cuentasX = app.ctasAcumuladasOpt(length(app.ctasAcumuladasOpt)-length(posicionesX)+1:end);
+                assignin('base','ctasX',cuentasX)
+                
                 [posAjustadaX, anchuraAjustadaX] = optimizarPos(app,posicionesX,cuentasX, 0.45)
                 
-                % Detener y eliminar sesión de optimización en X
-                stop(sX)
-                release(sX)
-                delete(sX)
-                
-                % Iniciar sesión en coordenada X
-                iniciarSesionCoordenada(app,'x')
-                
-                % Actualizar voltajes
-                actualizarVoltajes(app)
-                
-                % Moverse desde pos. actual a pos optima X
+                 % Moverse desde pos. actual a pos optima X
                 app.voltX = posAjustadaX * 0.125;
                 desplazarCoordenada(app, 'x')
                 
@@ -3156,83 +3142,52 @@ properties (Access = private)
                 hold(app.UIAxes, 'off');
                 
                 app.XcoordEditField.Value = posAjustadaX;
-               
                 
+                % Eliminar cuentas acumuladas de la app
+                app.ctasAcumuladasOpt = [];
+                
+                stop(app.DAQSesionCoordX)
+                app.DAQSesionCoordX.Rate = 1000;
+                disp(app.DAQSesionCoordX.Rate)
                 
                 %=========================================================================
                 %============================= O P T .  Y ================================
                 
                 % Voltajes de salida
-                outVoltY = repelem(posicionesY*0.125, constVoltIntervalo);
+                %outVoltX = repelem(posicionesX*0.125, constVoltIntervalo);
+                outVoltY = posicionesY*0.125;
                 
-                % Mover el piezo en la coordenada Y al punto de partida
+                assignin('base',"outVoltY",outVoltY)
+                
+                % Mover el piezo en la coordenada X al punto de partida
                 app.voltY = outVoltY(1);
                 desplazarCoordenada(app,'y')
                 
-                % Detener sesión en Y para agregar contador
+                % Configurar rate
+                
                 stop(app.DAQSesionCoordY)
-                release(app.DAQSesionCoordY)
-                delete(app.DAQSesionCoordY)
+                app.DAQSesionCoordY.Rate = ceil(1/rateTrazaEff);
+                disp(app.DAQSesionCoordY.Rate)
+                % Configurar acumulacion de cuentas
+                app.acumularCtas = true;
                 
-                app.DAQSesionCoordY = [];
-                
-                % Iniciar sesion en coordenada Y
-                sY = daq.createSession('ni');
-                addAnalogOutputChannel(sY, 'Dev1', 'ao1', 'Voltage');
-                addAnalogInputChannel(sY, 'Dev1', 'ai4', 'Voltage');
-                
-                % Agregar un canal de entrada para contador
-                addCounterInputChannel(sY, 'Dev1', 'ctr0', 'EdgeCount');
-                
-                % Configurar la tasa de muestreo igual a frec. del reloj
-                sY.Rate = app.ScanFreqEditField.Value;
-                
-                % Recibir datos en un tiempo determinado
-                sY.IsContinuous = false;
-                
-                % Poner voltajes a la cola
-                queueOutputData(sY, outVoltY);
                 
                 % Mover piezo y recibir cuentas
-                [data, ~] = sY.startForeground();
+                queueOutputData(app.DAQSesionCoordY,outVoltY)
+                app.DAQSesionCoordY.startForeground();
+                app.acumularCtas = false;
                 
-                % Indices donde se consideran cuentas
-                initCtasY = (intervaloSetPiezo:constVoltIntervalo:length(outVoltY))';
-                finCtasY = (constVoltIntervalo-1:constVoltIntervalo:length(outVoltY))';
-                
-                idxCtasY = [initCtasY finCtasY];
-                
-                clear initCtasY finCtasY;
-                
-                % Derivar cuentas brutas
-                data = diff(data(:,2));
-                
-                % Definir vector para almacenar cuentas
-                cuentasY = zeros(length(posicionesY),1);
-                
-                for i=1:length(idxCtasY)
-                    cuentasY(i) = sum(  data(idxCtasY(i,1):idxCtasY(i,2))  )/integrationTime;
-                end
-                
-                clear idxCtasY data;
-                
-                assignin('base','ctasY',cuentasY)
+                % Guardar cuentas en workspace
+                assignin('base','ctasAcumuladasY',app.ctasAcumuladasOpt);
                 
                 % Obtener posición y anchura ajustadas
+                disp(length(app.ctasAcumuladasOpt)-length(posicionesY)+1)
+                cuentasY = app.ctasAcumuladasOpt(length(app.ctasAcumuladasOpt)-length(posicionesY)+1:end);
+                assignin('base','ctasY',cuentasY)
+                
                 [posAjustadaY, anchuraAjustadaY] = optimizarPos(app,posicionesY,cuentasY, 0.45)
                 
-                % Detener y eliminar sesión de optimización en Y
-                stop(sY)
-                release(sY)
-                delete(sY)
-                
-                % Iniciar sesión en coordenada Y
-                iniciarSesionCoordenada(app,'y')
-                
-                % Actualizar voltajes
-                actualizarVoltajes(app)
-                
-                % Moverse desde pos. actual a pos optima Y
+                 % Moverse desde pos. actual a pos optima X
                 app.voltY = posAjustadaY * 0.125;
                 desplazarCoordenada(app, 'y')
                 
@@ -3243,87 +3198,63 @@ properties (Access = private)
                 
                 app.YcoordEditField.Value = posAjustadaY;
                 
+                % Eliminar cuentas acumuladas de la app
+                app.ctasAcumuladasOpt = [];
+                
+                stop(app.DAQSesionCoordY)
+                app.DAQSesionCoordY.Rate = 1000;
+                disp(app.DAQSesionCoordY.Rate)
+                
                 %=========================================================================
                 %============================= O P T .  Z ================================
                 
                 % Voltajes de salida
-                outVoltZ = repelem(posicionesZ*0.125, constVoltIntervalo);
+                outVoltZ = posicionesZ*0.125;
                 
-                % Mover el piezo en la coordenada Z al punto de partida
+                assignin('base',"outVoltZ",outVoltZ)
+                
+                % Mover el piezo en la coordenada X al punto de partida
                 app.voltZ = outVoltZ(1);
                 desplazarCoordenada(app,'z')
                 
-                % Detener sesión en Y para agregar contador
+                % Configurar rate
+                
                 stop(app.DAQSesionCoordZ)
-                release(app.DAQSesionCoordZ)
-                delete(app.DAQSesionCoordZ)
+                app.DAQSesionCoordZ.Rate = ceil(1/rateTrazaEff);
+                disp(app.DAQSesionCoordZ.Rate)
+                % Configurar acumulacion de cuentas
+                app.acumularCtas = true;
                 
-                app.DAQSesionCoordZ = [];
-                
-                % Iniciar sesión en coordenada Z
-                sZ = daq.createSession('ni');
-                addAnalogOutputChannel(sZ, 'Dev1', 'ao2', 'Voltage');
-                addAnalogInputChannel(sZ, 'Dev1', 'ai16', 'Voltage');
-                
-                % Agregar un canal de entrada para contador
-                addCounterInputChannel(sZ, 'Dev1', 'ctr0', 'EdgeCount');
-                
-                % Configurar la tasa de muestreo igual a frec. del reloj
-                sZ.Rate = app.ScanFreqEditField.Value;
-                
-                % Recibir datos en un tiempo determinado
-                sZ.IsContinuous = false;
-                
-                % Poner voltajes a la cola
-                queueOutputData(sZ, outVoltZ);
                 
                 % Mover piezo y recibir cuentas
-                [data, ~] = sZ.startForeground();
+                queueOutputData(app.DAQSesionCoordZ,outVoltZ)
+                app.DAQSesionCoordZ.startForeground();
+                app.acumularCtas = false;
                 
-                % Indices donde se consideran cuentas
-                initCtasZ = (intervaloSetPiezo:constVoltIntervalo:length(outVoltZ))';
-                finCtasZ = (constVoltIntervalo-1:constVoltIntervalo:length(outVoltZ))';
-                
-                idxCtasZ = [initCtasZ finCtasZ];
-                
-                clear initCtasZ finCtasZ;
-                
-                % Derivar cuentas brutas
-                data = diff(data(:,2));
-                
-                % Definir vector para almacenar cuentas
-                cuentasZ = zeros(length(posicionesZ),1);
-                
-                for i=1:length(idxCtasZ)
-                    cuentasZ(i) = sum(  data(idxCtasZ(i,1):idxCtasZ(i,2))  )/integrationTime;
-                end
-                
-                clear idxCtasZ data;
-                
-                assignin('base','ctasZ',cuentasZ)
-                assignin('base','posicionesZ',posicionesZ)
+                % Guardar cuentas en workspace
+                assignin('base','ctasAcumuladasZ',app.ctasAcumuladasOpt);
                 
                 % Obtener posición y anchura ajustadas
+                disp(length(app.ctasAcumuladasOpt)-length(posicionesZ)+1)
+                cuentasZ = app.ctasAcumuladasOpt(length(app.ctasAcumuladasOpt)-length(posicionesZ)+1:end);
+                assignin('base','ctasZ',cuentasZ)
+                
                 [posAjustadaZ, anchuraAjustadaZ] = optimizarPos(app,posicionesZ,cuentasZ, 0.45)
                 
-                % Detener y eliminar sesión de optimización en Z
-                stop(sZ)
-                release(sZ)
-                delete(sZ)
-                
-                % Iniciar sesión en coordenada Z
-                iniciarSesionCoordenada(app,'z')
-                
-                % Actualizar voltajes
-                actualizarVoltajes(app)
-                
-                % Moverse desde pos. actual a pos optima Z
+                 % Moverse desde pos. actual a pos optima X
                 app.voltZ = posAjustadaZ * 0.125;
                 desplazarCoordenada(app, 'z')
                 
-                % Actualizar GUI
+                
                 app.ZcoordEditField.Value = posAjustadaZ;
-                app.ZSlider.Value = posAjustadaZ;
+                
+                % Eliminar cuentas acumuladas de la app
+                app.ctasAcumuladasOpt = [];
+                
+                stop(app.DAQSesionCoordZ)
+                app.DAQSesionCoordZ.Rate = 1000;
+                disp(app.DAQSesionCoordZ.Rate)
+
                 
             else
                 iniciarSesionCoordenada(app,'x')
@@ -3346,6 +3277,75 @@ properties (Access = private)
             dataLoadedCallback(app)
             
             actualizarBarraColor(app,'scan')
+        end
+
+        % Value changed function: TrackerSwitch
+        function TrackerSwitchValueChanged(app, event)
+            value = app.TrackerSwitch.Value;
+            switch value
+                case 'Off'
+                    app.trackerReady = false;
+                case 'On'
+                    app.trackerReady = true;
+            end
+        end
+
+        % Callback function
+        function Traza2TestButtonPushed(app, event)
+            
+            %======================================================================
+            %===================== CONF. GRÁFICO TRAZA ======================
+            
+            % Setear buffers como arreglos vacíos previo a usarlos
+            app.DataFIFOBufferTrazaScan = [];
+            app.TimestampsFIFOBufferTrazaScan = [];
+            
+            
+            % Crear figura externa a la app para mostrar traza
+            app.traceScanFigure = figure('Name','Traza Scan', 'Position', [100, 100, 800, 600]);
+            
+            % Obtener el handle a los ejes de la figura
+            app.axesScanTrace = axes(app.traceScanFigure);
+            %Hacer plot sin datos
+            app.lineScanTrace = plot(app.axesScanTrace, NaN, 'LineWidth',3,"Color",'k');
+            
+            % Conf. título y etiquetas
+            title(app.axesScanTrace, 'Traza Scan');
+            xlabel(app.axesScanTrace, 'u.a');
+            ylabel(app.axesScanTrace, 'cuentas/s');
+            
+            xlim(app.axesScanTrace,[0, app.NBufferEditField.Value]);
+            set(app.axesScanTrace, 'FontSize', 32);
+            
+            %======================================================================
+            %======================================================================
+            % Iniciar sesion de traza scan
+            iniciarTrazaScan(app)
+            
+            % Crear listener e iniciar en 2do plano sesion de adquisición
+            app.trazaScanListener = addlistener(app.DAQTrazaScan, 'DataAvailable', ...
+                @(src,event) trazaScanCallback(app, src, event));
+            
+            startBackground(app.DAQTrazaScan);
+            %======================================================================
+            %======================================================================
+            
+        end
+
+        % Callback function
+        function StopTraza2ButtonValueChanged(app, event)
+            % Detener adquisición de datos
+            stop(app.DAQTrazaScan)
+            
+            % Eliminar e inicializar listener a array vacío
+            delete(app.trazaScanListener);
+            app.trazaScanListener = [];
+            
+            % Setear handles de gráfico de traza a array vacios
+            delete(app.traceScanFigure)
+            app.traceScanFigure = [];
+            app.axesScanTrace = [];
+            app.lineScanTrace = [];
         end
     end
 
@@ -3389,7 +3389,7 @@ properties (Access = private)
             app.PanelTraza = uipanel(app.GridLayout);
             app.PanelTraza.AutoResizeChildren = 'off';
             app.PanelTraza.Title = 'Panel2';
-            app.PanelTraza.Layout.Row = [6 10];
+            app.PanelTraza.Layout.Row = [6 9];
             app.PanelTraza.Layout.Column = [1 3];
 
             % Create StartTraceButton
@@ -3398,7 +3398,7 @@ properties (Access = private)
             app.StartTraceButton.BackgroundColor = [0.4235 0.902 0.0824];
             app.StartTraceButton.FontSize = 20;
             app.StartTraceButton.FontWeight = 'bold';
-            app.StartTraceButton.Position = [23 230 119 40];
+            app.StartTraceButton.Position = [15 80 119 40];
             app.StartTraceButton.Text = 'Start Trace';
 
             % Create StopTraceButton
@@ -3408,14 +3408,14 @@ properties (Access = private)
             app.StopTraceButton.BackgroundColor = [0.9804 0.0784 0.0784];
             app.StopTraceButton.FontSize = 20;
             app.StopTraceButton.FontWeight = 'bold';
-            app.StopTraceButton.Position = [152 229 122 41];
+            app.StopTraceButton.Position = [12 13 122 41];
 
             % Create IntTimemsEditFieldLabel
             app.IntTimemsEditFieldLabel = uilabel(app.PanelTraza);
             app.IntTimemsEditFieldLabel.HorizontalAlignment = 'right';
             app.IntTimemsEditFieldLabel.FontSize = 18;
             app.IntTimemsEditFieldLabel.FontWeight = 'bold';
-            app.IntTimemsEditFieldLabel.Position = [17 172 122 22];
+            app.IntTimemsEditFieldLabel.Position = [178 89 122 22];
             app.IntTimemsEditFieldLabel.Text = 'Int. Time (ms)';
 
             % Create IntTimemsEditField
@@ -3423,7 +3423,7 @@ properties (Access = private)
             app.IntTimemsEditField.Limits = [0.0005 1000];
             app.IntTimemsEditField.ValueChangedFcn = createCallbackFcn(app, @IntTimemsEditFieldValueChanged, true);
             app.IntTimemsEditField.FontSize = 18;
-            app.IntTimemsEditField.Position = [163 171 54 23];
+            app.IntTimemsEditField.Position = [324 88 54 23];
             app.IntTimemsEditField.Value = 2;
 
             % Create NBufferEditFieldLabel
@@ -3431,7 +3431,7 @@ properties (Access = private)
             app.NBufferEditFieldLabel.HorizontalAlignment = 'right';
             app.NBufferEditFieldLabel.FontSize = 18;
             app.NBufferEditFieldLabel.FontWeight = 'bold';
-            app.NBufferEditFieldLabel.Position = [257 172 76 22];
+            app.NBufferEditFieldLabel.Position = [178 23 76 22];
             app.NBufferEditFieldLabel.Text = 'N Buffer';
 
             % Create NBufferEditField
@@ -3440,7 +3440,7 @@ properties (Access = private)
             app.NBufferEditField.ValueDisplayFormat = '%.0f';
             app.NBufferEditField.ValueChangedFcn = createCallbackFcn(app, @NBufferEditFieldValueChanged, true);
             app.NBufferEditField.FontSize = 18;
-            app.NBufferEditField.Position = [356 171 54 23];
+            app.NBufferEditField.Position = [324 21 54 23];
             app.NBufferEditField.Value = 50;
 
             % Create NotifyScansSpinnerLabel
@@ -3448,7 +3448,7 @@ properties (Access = private)
             app.NotifyScansSpinnerLabel.HorizontalAlignment = 'right';
             app.NotifyScansSpinnerLabel.FontSize = 18;
             app.NotifyScansSpinnerLabel.FontWeight = 'bold';
-            app.NotifyScansSpinnerLabel.Position = [17 131 115 22];
+            app.NotifyScansSpinnerLabel.Position = [178 54 115 22];
             app.NotifyScansSpinnerLabel.Text = 'Notify Scans';
 
             % Create NotifyScansSpinner
@@ -3457,7 +3457,7 @@ properties (Access = private)
             app.NotifyScansSpinner.ValueDisplayFormat = '%g';
             app.NotifyScansSpinner.ValueChangedFcn = createCallbackFcn(app, @NotifyScansSpinnerValueChanged, true);
             app.NotifyScansSpinner.FontSize = 18;
-            app.NotifyScansSpinner.Position = [163 130 62 23];
+            app.NotifyScansSpinner.Position = [324 53 58 23];
             app.NotifyScansSpinner.Value = 50;
 
             % Create MeanEditFieldLabel
@@ -3465,7 +3465,7 @@ properties (Access = private)
             app.MeanEditFieldLabel.HorizontalAlignment = 'right';
             app.MeanEditFieldLabel.FontSize = 28;
             app.MeanEditFieldLabel.FontWeight = 'bold';
-            app.MeanEditFieldLabel.Position = [73 68 77 34];
+            app.MeanEditFieldLabel.Position = [149 172 77 34];
             app.MeanEditFieldLabel.Text = 'Mean';
 
             % Create MeanEditField
@@ -3474,14 +3474,14 @@ properties (Access = private)
             app.MeanEditField.Editable = 'off';
             app.MeanEditField.FontSize = 28;
             app.MeanEditField.FontWeight = 'bold';
-            app.MeanEditField.Position = [165 68 180 34];
+            app.MeanEditField.Position = [241 172 180 34];
 
             % Create STDEditFieldLabel
             app.STDEditFieldLabel = uilabel(app.PanelTraza);
             app.STDEditFieldLabel.HorizontalAlignment = 'right';
             app.STDEditFieldLabel.FontSize = 28;
             app.STDEditFieldLabel.FontWeight = 'bold';
-            app.STDEditFieldLabel.Position = [73 5 61 34];
+            app.STDEditFieldLabel.Position = [149 131 61 34];
             app.STDEditFieldLabel.Text = 'STD';
 
             % Create STDEditField
@@ -3490,67 +3490,21 @@ properties (Access = private)
             app.STDEditField.Editable = 'off';
             app.STDEditField.FontSize = 28;
             app.STDEditField.FontWeight = 'bold';
-            app.STDEditField.Position = [166 5 179 34];
+            app.STDEditField.Position = [242 131 179 34];
 
             % Create SavingDataSwitchLabel
             app.SavingDataSwitchLabel = uilabel(app.PanelTraza);
             app.SavingDataSwitchLabel.HorizontalAlignment = 'center';
             app.SavingDataSwitchLabel.FontSize = 18;
             app.SavingDataSwitchLabel.FontWeight = 'bold';
-            app.SavingDataSwitchLabel.Position = [305 248 109 22];
+            app.SavingDataSwitchLabel.Position = [15 172 109 22];
             app.SavingDataSwitchLabel.Text = 'Saving Data';
 
             % Create SavingDataSwitch
             app.SavingDataSwitch = uiswitch(app.PanelTraza, 'slider');
             app.SavingDataSwitch.ValueChangedFcn = createCallbackFcn(app, @SavingDataSwitchValueChanged, true);
             app.SavingDataSwitch.FontSize = 18;
-            app.SavingDataSwitch.Position = [334 227 51 22];
-
-            % Create Panel3
-            app.Panel3 = uipanel(app.GridLayout);
-            app.Panel3.AutoResizeChildren = 'off';
-            app.Panel3.Title = 'Panel3';
-            app.Panel3.Layout.Row = [11 12];
-            app.Panel3.Layout.Column = [1 3];
-
-            % Create StartOptButton
-            app.StartOptButton = uibutton(app.Panel3, 'state');
-            app.StartOptButton.ValueChangedFcn = createCallbackFcn(app, @StartOptButtonValueChanged, true);
-            app.StartOptButton.Text = 'Start Opt.';
-            app.StartOptButton.BackgroundColor = [0.2196 0.9804 0.1804];
-            app.StartOptButton.FontSize = 18;
-            app.StartOptButton.FontWeight = 'bold';
-            app.StartOptButton.Position = [32 43 100 29];
-
-            % Create XYRangeEditFieldLabel
-            app.XYRangeEditFieldLabel = uilabel(app.Panel3);
-            app.XYRangeEditFieldLabel.HorizontalAlignment = 'center';
-            app.XYRangeEditFieldLabel.FontSize = 18;
-            app.XYRangeEditFieldLabel.FontWeight = 'bold';
-            app.XYRangeEditFieldLabel.Position = [179 57 96 22];
-            app.XYRangeEditFieldLabel.Text = 'X-Y Range';
-
-            % Create XYRangeEditField
-            app.XYRangeEditField = uieditfield(app.Panel3, 'numeric');
-            app.XYRangeEditField.FontSize = 18;
-            app.XYRangeEditField.FontWeight = 'bold';
-            app.XYRangeEditField.Position = [174 27 105 23];
-            app.XYRangeEditField.Value = 800;
-
-            % Create ZRangeEditFieldLabel
-            app.ZRangeEditFieldLabel = uilabel(app.Panel3);
-            app.ZRangeEditFieldLabel.HorizontalAlignment = 'center';
-            app.ZRangeEditFieldLabel.FontSize = 18;
-            app.ZRangeEditFieldLabel.FontWeight = 'bold';
-            app.ZRangeEditFieldLabel.Position = [326 57 77 22];
-            app.ZRangeEditFieldLabel.Text = 'Z Range';
-
-            % Create ZRangeEditField
-            app.ZRangeEditField = uieditfield(app.Panel3, 'numeric');
-            app.ZRangeEditField.FontSize = 18;
-            app.ZRangeEditField.FontWeight = 'bold';
-            app.ZRangeEditField.Position = [312 27 105 23];
-            app.ZRangeEditField.Value = 1800;
+            app.SavingDataSwitch.Position = [44 151 51 22];
 
             % Create Panel4
             app.Panel4 = uipanel(app.GridLayout);
@@ -3593,7 +3547,7 @@ properties (Access = private)
 
             % Create ScanFreqEditField
             app.ScanFreqEditField = uieditfield(app.Panel4, 'numeric');
-            app.ScanFreqEditField.Limits = [100 100000];
+            app.ScanFreqEditField.Limits = [100 5000000];
             app.ScanFreqEditField.ValueDisplayFormat = '%.2e';
             app.ScanFreqEditField.ValueChangedFcn = createCallbackFcn(app, @ScanNpixelsEditFieldValueChanged, true);
             app.ScanFreqEditField.FontSize = 18;
@@ -3999,14 +3953,6 @@ properties (Access = private)
             app.ZcoordEditField.FontWeight = 'bold';
             app.ZcoordEditField.Position = [617 59 100 23];
 
-            % Create StartTraceCtr2Button
-            app.StartTraceCtr2Button = uibutton(app.Panel6, 'push');
-            app.StartTraceCtr2Button.BackgroundColor = [0.4235 0.902 0.0824];
-            app.StartTraceCtr2Button.FontSize = 20;
-            app.StartTraceCtr2Button.FontWeight = 'bold';
-            app.StartTraceCtr2Button.Position = [25 11 164 40];
-            app.StartTraceCtr2Button.Text = 'Start Trace Ctr2';
-
             % Create Panel7
             app.Panel7 = uipanel(app.GridLayout);
             app.Panel7.Title = 'Panel7';
@@ -4123,6 +4069,66 @@ properties (Access = private)
             app.CleanFigButton.FontSize = 18;
             app.CleanFigButton.FontWeight = 'bold';
             app.CleanFigButton.Position = [212 1 102 29];
+
+            % Create Panel3
+            app.Panel3 = uipanel(app.GridLayout);
+            app.Panel3.AutoResizeChildren = 'off';
+            app.Panel3.Title = 'Panel3';
+            app.Panel3.Layout.Row = [10 12];
+            app.Panel3.Layout.Column = [1 2];
+
+            % Create TrackerSwitchLabel
+            app.TrackerSwitchLabel = uilabel(app.Panel3);
+            app.TrackerSwitchLabel.HorizontalAlignment = 'center';
+            app.TrackerSwitchLabel.FontSize = 18;
+            app.TrackerSwitchLabel.FontWeight = 'bold';
+            app.TrackerSwitchLabel.Position = [35 126 70 22];
+            app.TrackerSwitchLabel.Text = 'Tracker';
+
+            % Create TrackerSwitch
+            app.TrackerSwitch = uiswitch(app.Panel3, 'slider');
+            app.TrackerSwitch.ValueChangedFcn = createCallbackFcn(app, @TrackerSwitchValueChanged, true);
+            app.TrackerSwitch.FontSize = 18;
+            app.TrackerSwitch.Position = [44 105 51 22];
+
+            % Create StartOptButton
+            app.StartOptButton = uibutton(app.Panel3, 'state');
+            app.StartOptButton.ValueChangedFcn = createCallbackFcn(app, @StartOptButtonValueChanged, true);
+            app.StartOptButton.Text = 'Start Opt.';
+            app.StartOptButton.BackgroundColor = [0.2196 0.9804 0.1804];
+            app.StartOptButton.FontSize = 18;
+            app.StartOptButton.FontWeight = 'bold';
+            app.StartOptButton.Position = [161 105 100 29];
+
+            % Create XYRangeEditFieldLabel
+            app.XYRangeEditFieldLabel = uilabel(app.Panel3);
+            app.XYRangeEditFieldLabel.HorizontalAlignment = 'center';
+            app.XYRangeEditFieldLabel.FontSize = 18;
+            app.XYRangeEditFieldLabel.FontWeight = 'bold';
+            app.XYRangeEditFieldLabel.Position = [18 53 96 22];
+            app.XYRangeEditFieldLabel.Text = 'X-Y Range';
+
+            % Create XYRangeEditField
+            app.XYRangeEditField = uieditfield(app.Panel3, 'numeric');
+            app.XYRangeEditField.FontSize = 18;
+            app.XYRangeEditField.FontWeight = 'bold';
+            app.XYRangeEditField.Position = [13 23 105 23];
+            app.XYRangeEditField.Value = 800;
+
+            % Create ZRangeEditFieldLabel
+            app.ZRangeEditFieldLabel = uilabel(app.Panel3);
+            app.ZRangeEditFieldLabel.HorizontalAlignment = 'center';
+            app.ZRangeEditFieldLabel.FontSize = 18;
+            app.ZRangeEditFieldLabel.FontWeight = 'bold';
+            app.ZRangeEditFieldLabel.Position = [172 49 77 22];
+            app.ZRangeEditFieldLabel.Text = 'Z Range';
+
+            % Create ZRangeEditField
+            app.ZRangeEditField = uieditfield(app.Panel3, 'numeric');
+            app.ZRangeEditField.FontSize = 18;
+            app.ZRangeEditField.FontWeight = 'bold';
+            app.ZRangeEditField.Position = [158 19 105 23];
+            app.ZRangeEditField.Value = 1800;
 
             % Show the figure after all components are created
             app.UIFigure.Visible = 'on';
