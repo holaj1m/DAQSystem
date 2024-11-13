@@ -70,6 +70,7 @@ classdef DAQDataAnalyzer_exported < matlab.apps.AppBase
         Goto000Button                matlab.ui.control.StateButton
         ZSliderLabel                 matlab.ui.control.Label
         ZSlider                      matlab.ui.control.Slider
+        Switch                       matlab.ui.control.ToggleSwitch
         Panel6                       matlab.ui.container.Panel
         XcoordEditFieldLabel         matlab.ui.control.Label
         XcoordEditField              matlab.ui.control.NumericEditField
@@ -77,6 +78,10 @@ classdef DAQDataAnalyzer_exported < matlab.apps.AppBase
         YcoordEditField              matlab.ui.control.NumericEditField
         ZcoordEditFieldLabel         matlab.ui.control.Label
         ZcoordEditField              matlab.ui.control.NumericEditField
+        Mean2EditFieldLabel          matlab.ui.control.Label
+        Mean2EditField               matlab.ui.control.NumericEditField
+        STD2EditFieldLabel           matlab.ui.control.Label
+        STD2EditField                matlab.ui.control.NumericEditField
         Panel7                       matlab.ui.container.Panel
         LoadFigureButton             matlab.ui.control.Button
         SetoffsetButton              matlab.ui.control.StateButton
@@ -91,14 +96,26 @@ classdef DAQDataAnalyzer_exported < matlab.apps.AppBase
         ZoomSizeumEditFieldLabel     matlab.ui.control.Label
         ZoomSizeumEditField          matlab.ui.control.NumericEditField
         CleanFigButton               matlab.ui.control.StateButton
+        Lamp                         matlab.ui.control.Lamp
+        ZoomSwitchLabel              matlab.ui.control.Label
+        ZoomSwitch                   matlab.ui.control.Switch
         Panel3                       matlab.ui.container.Panel
-        TrackerSwitchLabel           matlab.ui.control.Label
-        TrackerSwitch                matlab.ui.control.Switch
-        StartOptButton               matlab.ui.control.StateButton
         XYRangeEditFieldLabel        matlab.ui.control.Label
         XYRangeEditField             matlab.ui.control.NumericEditField
         ZRangeEditFieldLabel         matlab.ui.control.Label
         ZRangeEditField              matlab.ui.control.NumericEditField
+        NBufferOptLabel              matlab.ui.control.Label
+        NBufferOptEditField          matlab.ui.control.NumericEditField
+        UpToleranceEditFieldLabel    matlab.ui.control.Label
+        UpToleranceEditField         matlab.ui.control.NumericEditField
+        DownToleranceEditFieldLabel  matlab.ui.control.Label
+        DownToleranceEditField       matlab.ui.control.NumericEditField
+        Panel8                       matlab.ui.container.Panel
+        StartOptButton               matlab.ui.control.StateButton
+        Switch_2                     matlab.ui.control.ToggleSwitch
+        SaveCoordsButton             matlab.ui.control.StateButton
+        TrackerSwitchLabel           matlab.ui.control.Label
+        TrackerSwitch                matlab.ui.control.Switch
     end
 
     
@@ -107,22 +124,34 @@ properties (Access = private)
         
         DAQClkTraceSession = [] % Handle to DAQ session
         
+        DAQSession2 = []
+        
         
         DAQTrazaScan = [] % sesion de traza a ejecutar durante scan
         trazaScanListener = [];
         traceScanFigure % Handle a figura externa que plotea la traza
         axesScanTrace % Handle de los ejes de figura que plotea traza
         lineScanTrace % Handle a la linea del gráfico
+        
+        axesTraceLeft
+        axesTraceRight
+        
+        mostrarScanCont1 = true;
         DataFIFOBufferTrazaScan
         TimestampsFIFOBufferTrazaScan
         
         TraceAvailableListener % Listener for DAQ session 'DataAvailable' event
+        TraceAvailableListener2
         
-        
+        %======= TRAZA APD %=======
         TimestampsFIFOBuffer % Timestamps FIFO buffer used for live plot of latest "N" seconds of acquired data
-        
+        bufferSizeExcelitas
+        bufferSizeLasercomp
         DataFIFOBuffer  % Data FIFO buffer used for live plot of latest "N" seconds of acquired data
-        
+        %======= TRAZA INFRARROJO %=======
+        DataFIFOBufferInfrarrojo
+        lineTraceInfrarrojo
+        %=======
         traceFigure % Handle a figura externa que plotea la traza
         axesTrace % Handle de los ejes de figura que plotea traza
         lineTrace % Handle a la linea del gráfico
@@ -130,8 +159,40 @@ properties (Access = private)
         % VARIABLES PARA SINCRONIZAR OPTIMIZACION
         acumularCtas = false; % Bandera lógica para dar paso a optimizacion
         ctasAcumuladasOpt = []; % variable para acumular cuentas
+        bufferOptTrackerExcelitas = []; % Buffer para acumular cuentas en el trackeo
+        bufferOptTrackerLasercomp = [];
+        mediaTracking;
         
-        trackerReady = false; % Verifica que este calculado el promedio para trackear
+        % Variables para almacenar coordenadas optimizadas durante tracking
+        trackingCoordX = [];
+        trackingCoordY = [];
+        trackingCoordZ = [];
+        figCoordTracking
+        axesTrackingX
+        lineTrackingX
+        
+        axesTrackingY
+        lineTrackingY
+        
+        axesTrackingZ
+        lineTrackingZ
+        
+        axesTrackingXY
+        lineTrackingXY
+        
+        CheckConditionsOpt
+        
+        umbralDownTracker = 1;
+        umbralUpTracker = 1;
+        
+        optimizarContador1 = true;
+        ctaMaxZ
+        
+        % Figuras con cuentas de la optimizacion
+        figOptX = [];
+        figOptY = [];
+        figOptZ = [];
+        
         
         %========================================
         
@@ -148,6 +209,9 @@ properties (Access = private)
         
         DAQScanSession = [] % Sesion para realizar scan
         scanListener = [];
+        
+        DAQScanCtr2 = [];
+        scanCtr2Listener = [];
         
         % Sesiones para manejo de coordenadas por separado
         
@@ -172,6 +236,12 @@ properties (Access = private)
         sizeZoom % Tamaño del scan en el zoom
         countsMatrix = [] % Matrix associated with counts/s at the given coordinates
         countsZoom = []
+        
+        countsMatrixAPD2 = [] % Matrix associated with counts/s at the given coordinates
+        countsZoomAPD2 = []
+        
+        isZoom = false; % Variable para controlar si el proceso de scan corresponde a zoom o scan
+        
         matrixPlot 
         isClickedDown = false
         buttonDownTime % Variable para medir el tiempo que se mantiene presionado el clic
@@ -200,6 +270,7 @@ properties (Access = private)
     methods (Access = private)
         
         function dataAvailable_Callback(app, ~, event)
+            
         %dataAvailable_Callback Executes on DAQ session DataAvailable event
         %  This callback function gets executed periodically as more data is acquired.
         %  For a smooth live plot update, it stores the latest N seconds
@@ -207,12 +278,9 @@ properties (Access = private)
         %  buffers. A live plot is updated with the data in the FIFO buffer.
         %  If data logging option is selected in the UI, it also writes data to a
         %  binary file.
-        
-        
-%         if app.acumularCtas
-%             app.ctasAcumuladasOpt = [app.ctasAcumuladasOpt; event.Data(:,1)];
-%         end
-        
+            
+            % Verificar si se están guardando los datos
+            
             if app.LogRequested
                 % If Log data to file switch is on
                 data = [event.TimeStamps, event.Data]' ;
@@ -221,40 +289,151 @@ properties (Access = private)
                     app.TriggerTime = event.TriggerTime;
                 end
             end
-            
+        
+            %===================================================
+            %================== TRAZA APD ======================
+        
+        
             % Store continuous acquisition data in FIFO data buffers
-            buffersize = round(abs(app.NBufferEditField.Value));
-            
+            app.bufferSizeExcelitas = round(abs(app.NBufferEditField.Value));
+        
             % Definir variables que determinan tiempo de integración
             timeMs = app.IntTimemsEditField.Value;
             dT = timeMs/(1000*2);
-            
+        
             data = mean(diff(event.Data(:,1)))/(2*dT);
-            
-            if app.acumularCtas
-                app.ctasAcumuladasOpt = [app.ctasAcumuladasOpt; data];
+        
+            if app.acumularCtas && app.optimizarContador1
+            app.ctasAcumuladasOpt = [app.ctasAcumuladasOpt; data];
             end
             
             
-            app.DataFIFOBuffer = storeDataInFIFO(app, app.DataFIFOBuffer, buffersize, data);
+            app.DataFIFOBuffer = storeDataInFIFO(app, app.DataFIFOBuffer, app.bufferSizeExcelitas, data);
             
-            if numel(app.DataFIFOBuffer) == buffersize
+            if numel(app.DataFIFOBuffer) == app.bufferSizeExcelitas
                 app.MeanEditField.Value = mean(app.DataFIFOBuffer(1:end));
                 app.STDEditField.Value = std(app.DataFIFOBuffer(1:end));
                 
             end
             
-            if (app.trackerReady && (numel(app.DataFIFOBuffer) == buffersize) && (app.MeanEditField.Value < app.MeanEditField.Value*0.7))
+            % Update plot data
+            %yyaxis(app.axesTraceLeft, 'left');
+            set(app.lineTrace ,'YData', app.DataFIFOBuffer);
+            drawnow limitrate;
+            
+            bufferTracker = ceil(app.bufferSizeExcelitas * app.NBufferOptEditField.Value/100);
+            app.bufferOptTrackerExcelitas = storeDataInFIFO(app, app.bufferOptTrackerExcelitas, bufferTracker, data);
+            
+        end
+        
+        function conditionsOptExcelitas(app)
+            
+            % Si las cuentas suben por sobre un umbral actualizar el valor
+            % de referencia
+            if (numel(app.DataFIFOBuffer) == app.bufferSizeExcelitas) && (app.MeanEditField.Value > app.mediaTracking * app.umbralUpTracker)
                 
-                StartOptButtonValueChanged(app, event);
-                app.DataFIFOBuffer = [app.DataFIFOBuffer(end)];
+                app.mediaTracking = app.MeanEditField.Value;
+                disp("Se ha actualizado la tolerancia de subida " + app.mediaTracking * app.umbralUpTracker)
+                disp("Tolerancia de bajada " + app.mediaTracking * app.umbralDownTracker)
+            end
+            
+            
+            % Solo evalúa las condiciones lógicas cuando el tracker está activo
+            if (numel(app.DataFIFOBuffer) == app.bufferSizeExcelitas) && (mean(app.bufferOptTrackerExcelitas) < app.mediaTracking * app.umbralDownTracker)
+                
+                % Ejecuta la acción que se desea realizar sin bloquear el flujo de datos
+                StartOptButtonValueChanged(app, []);
+                
+                % Actualizar referencia de trackeo
+                app.mediaTracking = app.ctaMaxZ;
+                
+                % Guardar coordenadas trackeadas
+                app.trackingCoordX = [app.trackingCoordX; app.XcoordEditField.Value];
+                app.trackingCoordY = [app.trackingCoordY; app.YcoordEditField.Value];
+                app.trackingCoordZ = [app.trackingCoordZ; app.ZcoordEditField.Value];
+                
+                set(app.lineTrackingX ,'YData', app.trackingCoordX);
+                set(app.lineTrackingY ,'YData', app.trackingCoordY);
+                set(app.lineTrackingZ ,'YData', app.trackingCoordZ);
+                set(app.lineTrackingXY , 'XData', app.trackingCoordX, 'YData', app.trackingCoordY);
+                
+                
+                disp("Tamaño buffer tracking " + length(app.bufferOptTrackerExcelitas))
+                disp("Referencia Opt. " + app.mediaTracking)
+                disp("Valor tolerancia subida " + app.mediaTracking * app.umbralUpTracker)
+                disp("Valor tolerancia bajada " + app.mediaTracking * app.umbralDownTracker)
+                pause(2)
+            end
+        end
+        
+        function conditionsOptLasercomp(app)
+            
+            % Si las cuentas suben por sobre un umbral actualizar el valor
+            % de referencia
+            if (numel(app.DataFIFOBufferInfrarrojo) == app.bufferSizeLasercomp) && (app.Mean2EditField.Value > app.mediaTracking * app.umbralUpTracker)
+                
+                app.mediaTracking = app.Mean2EditField.Value;
+                disp("Se ha actualizado la tolerancia de subida " + app.mediaTracking * app.umbralUpTracker)
+                disp("Tolerancia de bajada " + app.mediaTracking * app.umbralDownTracker)
+            end
+            
+            
+            % Solo evalúa las condiciones lógicas cuando el tracker está activo
+            if (numel(app.DataFIFOBufferInfrarrojo) == app.bufferSizeLasercomp) && (mean(app.bufferOptTrackerLasercomp) < app.mediaTracking * app.umbralDownTracker)
+                
+                % Ejecuta la acción que se desea realizar sin bloquear el flujo de datos
+                StartOptButtonValueChanged(app, []);
+                app.mediaTracking = app.ctaMaxZ;
+                
+                % Guardar coordenadas trackeadas
+                app.trackingCoordX = [app.trackingCoordX; app.XcoordEditField.Value];
+                app.trackingCoordY = [app.trackingCoordY; app.YcoordEditField.Value];
+                app.trackingCoordZ = [app.trackingCoordZ; app.ZcoordEditField.Value];
+                
+                set(app.lineTrackingX ,'YData', app.trackingCoordX);
+                set(app.lineTrackingY ,'YData', app.trackingCoordY);
+                set(app.lineTrackingZ ,'YData', app.trackingCoordZ);
+                set(app.lineTrackingXY , 'XData', app.trackingCoordX, 'YData', app.trackingCoordY);
+                
+                
+                disp("Tamaño buffer tracking " + length(app.bufferOptTrackerLasercomp))
+                disp("Referencia Opt. " + app.mediaTracking)
+                disp("Valor tolerancia subida" + app.mediaTracking * app.umbralUpTracker)
+                disp("Valor tolerancia bajada" + app.mediaTracking * app.umbralDownTracker)
+                pause(2)
+            end
+        end
+
+        
+        function procesarTraza2(app, ~, event)
+            %==========================================================
+            %================== TRAZA INFRARROJO ======================
+            
+            % Store continuous acquisition data in FIFO data buffers
+            buffersize = round(abs(app.NBufferEditField.Value));
+        
+            % Definir variables que determinan tiempo de integración
+            timeMs = app.IntTimemsEditField.Value;
+            dT = timeMs/(1000*2);
+            
+            dataInfra = mean(diff(event.Data(:,1)))/(2*dT);
+            
+            if app.acumularCtas && ~(app.optimizarContador1)
+            app.ctasAcumuladasOpt = [app.ctasAcumuladasOpt; dataInfra];
+            end
+            
+            app.DataFIFOBufferInfrarrojo = storeDataInFIFO(app, app.DataFIFOBufferInfrarrojo, buffersize, dataInfra);
+            
+            if numel(app.DataFIFOBufferInfrarrojo) == buffersize
+                app.Mean2EditField.Value = mean(app.DataFIFOBufferInfrarrojo(1:end));
+                app.STD2EditField.Value = std(app.DataFIFOBufferInfrarrojo(1:end));
                 
             end
             
             % Update plot data
-            set(app.lineTrace ,'YData', app.DataFIFOBuffer);
+            %yyaxis(app.axesTraceRight, 'right');
+            set(app.lineTraceInfrarrojo ,'YData', app.DataFIFOBufferInfrarrojo);
             drawnow limitrate;
-            
         end
         
         function trazaScanCallback(app, ~, event)
@@ -284,6 +463,26 @@ properties (Access = private)
             StopTraceButtonValueChanged(app,[])
             % Cerrar la figura
             %delete(src);
+        end
+        
+        function closeScanTrazaCallback(app, src, event)
+            % Detener adquisición de datos
+            stop(app.DAQTrazaScan)
+            
+            % Eliminar e inicializar listener a array vacío
+            delete(app.trazaScanListener);
+            app.trazaScanListener = [];
+            
+            % Setear handles de gráfico de traza a array vacios
+            delete(app.traceScanFigure)
+            app.traceScanFigure = [];
+            app.axesScanTrace = [];
+            app.lineScanTrace = [];
+            
+            app.DataFIFOBufferTrazaScan = [];
+            app.TimestampsFIFOBufferTrazaScan = [];
+            
+            
         end
         
         function data = storeDataInFIFO(~, data, buffersize, datablock)
@@ -345,13 +544,22 @@ properties (Access = private)
                     app.StopscanButton.Enable = 'off';
                     app.LiveViewPanel.Visible = 'on';
                     
-                    if ~(isempty(app.DAQSession)) && app.DAQSession.IsRunning
+                    if ~(isempty(app.DAQSession)) && app.DAQSession.IsRunning % Sila traza está funcionando
                         app.StartTraceButton.Enable = 'off';
                         app.StopTraceButton.Enable = 'on';
                         app.SavingDataSwitch.Enable = 'off';
                         app.NotifyScansSpinner.Enable = 'off';
                         app.IntTimemsEditField.Enable = 'off';
                         app.NBufferEditField.Enable = 'off';
+                        % Optimización
+                        app.StartOptButton.Enable = 'on';
+                        app.TrackerSwitch.Enable = 'on';
+                        app.Switch_2.Enable = 'on';
+                        app.NBufferOptEditField.Enable = 'on';
+                        app.UpToleranceEditField.Enable = 'on';
+                        app.DownToleranceEditField.Enable = 'on';
+                        app.XYRangeEditField.Enable = 'on';
+                        app.ZRangeEditField.Enable = 'on';
                         
                     else
                         app.StartTraceButton.Enable = 'on';
@@ -360,6 +568,15 @@ properties (Access = private)
                         app.NotifyScansSpinner.Enable = 'on';
                         app.IntTimemsEditField.Enable = 'on';
                         app.NBufferEditField.Enable = 'on';
+                        % Optimización
+                        app.StartOptButton.Enable = 'off';
+                        app.TrackerSwitch.Enable = 'off';
+                        app.Switch_2.Enable = 'off';
+                        app.NBufferOptEditField.Enable = 'off';
+                        app.UpToleranceEditField.Enable = 'off';
+                        app.DownToleranceEditField.Enable = 'off';
+                        app.XYRangeEditField.Enable = 'off';
+                        app.ZRangeEditField.Enable = 'off';
                     end
                     
                     
@@ -396,6 +613,15 @@ properties (Access = private)
                     app.NBufferEditField.Enable = 'off';
                     app.StartTraceButton.Enable = 'off';
                     app.StopTraceButton.Enable = 'on';
+                    % Optimización
+                    app.StartOptButton.Enable = 'on';
+                    app.TrackerSwitch.Enable = 'on';
+                    app.Switch_2.Enable = 'on';
+                    app.NBufferOptEditField.Enable = 'on';
+                    app.UpToleranceEditField.Enable = 'on';
+                    app.DownToleranceEditField.Enable = 'on';
+                    app.XYRangeEditField.Enable = 'on';
+                    app.ZRangeEditField.Enable = 'on';
                     
                 case 'scanning'
                     app.SavingDataSwitch.Enable = 'on';
@@ -616,7 +842,8 @@ properties (Access = private)
             
             %DATOS DEPENDIENTES DE LA TAREA
             % Definir los datos a guardar
-            dataStruct.c = app.countsMatrix;
+            dataStruct.excelitas = app.countsMatrix;
+            dataStruct.laserComp = app.countsMatrixAPD2;
             dataStruct.x = app.xCoordCts;
             dataStruct.y = app.yCoordCts;
             
@@ -672,7 +899,8 @@ properties (Access = private)
             switch tipoScan
                 case 'scan'
                     % Definir los datos a guardar
-                    dataStruct.c = app.countsMatrix;
+                    dataStruct.excelitas = app.countsMatrix;
+                    dataStruct.laserComp = app.countsMatrixAPD2;
                     dataStruct.x = app.xCoordCts;
                     dataStruct.y = app.yCoordCts;
                     
@@ -708,7 +936,8 @@ properties (Access = private)
                     
                 case 'zoom'
                     % Definir los datos a guardar
-                    dataStruct.c = app.countsZoom;
+                    dataStruct.excelitas = app.countsZoom;
+                    dataStruct.laserComp = app.countsMatrixAPD2;
                     dataStruct.x = app.xCoordsZoom;
                     dataStruct.y = app.yCoordsZoom;
                     
@@ -745,6 +974,79 @@ properties (Access = private)
             
         end
         
+        function guardarRespaldoTracking(app)
+            
+            % Metadata correspondiente a la muestra
+            metadataMuestraStruct.muestra = app.SampleNameEditField.Value;
+            metadataMuestraStruct.filtro = app.FilterNameEditField.Value;
+            metadataMuestraStruct.detector = app.DetectorEditField.Value;
+            metadataMuestraStruct.potencia = app.PoweruWEditField.Value;
+            metadataMuestraStruct.longOnda = app.WavelengthnmEditField.Value;
+            
+            % Obtener la fecha y hora actual
+            timestamp = datetime('now', 'Format', 'yyyy-MM-dd_HHmmss');
+            timestampStr = datestr(timestamp, 'yyyy-mm-dd_HHMMSS');
+            
+            % Obtener la carpeta actual
+            currentFolder = pwd;
+            
+            % Definir nombre de archivo de respaldo (con solo día, mes y año)
+            backupFilename = ['respaldoTracking_', timestampStr, '.mat'];
+            backupFullPath = fullfile(currentFolder, backupFilename);
+            
+            % Definir los datos a guardar
+            dataStruct.x = app.trackingCoordX;
+            dataStruct.y = app.trackingCoordY;
+            dataStruct.y = app.trackingCoordZ;
+            
+            tracking.coords = dataStruct;
+            tracking.metadata = metadataMuestraStruct;
+            
+            % Guardar archivo de respaldo (sin hora)
+            save(backupFullPath, 'tracking');
+            disp(['Respaldo guardado en: ', backupFullPath]);
+        end
+        
+        function guardarTracking(app)
+            
+            % Obtener la fecha y hora actual
+            timestamp = datetime('now', 'Format', 'yyyy-MM-dd_HHmmss');
+            timestampStr = datestr(timestamp, 'yyyy-mm-dd_HHMMSS');
+            
+            % Generar el nombre del archivo
+            usrName = app.SampleNameEditField.Value;
+            
+            % Obtener la carpeta actual
+            currentFolder = pwd;
+            
+            % Metadata correspondiente a la muestra
+            metadataMuestraStruct.muestra = app.SampleNameEditField.Value;
+            metadataMuestraStruct.filtro = app.FilterNameEditField.Value;
+            metadataMuestraStruct.detector = app.DetectorEditField.Value;
+            metadataMuestraStruct.potencia = app.PoweruWEditField.Value;
+            metadataMuestraStruct.longOnda = app.WavelengthnmEditField.Value;
+            
+            % Definir los datos a guardar
+            dataStruct.x = app.trackingCoordX;
+            dataStruct.y = app.trackingCoordY;
+            dataStruct.y = app.trackingCoordZ;
+            
+            tracking.coords = dataStruct;
+            tracking.metadata = metadataMuestraStruct;
+            
+            % Guardar datos
+            filename = [timestampStr, '_', usrName, '_TRACKING.mat'];
+            
+            % Generar la ruta completa del archivo
+            fullPath = fullfile(currentFolder, filename);
+            
+            % Guardar los datos en un archivo .mat
+            save(fullPath, 'tracking');
+            
+            % Mostrar un mensaje de confirmación
+            disp(['Tracking guardado en: ', fullPath]);
+            
+        end
         
         function closeApp_Callback(app, ~, event, isAcquiring)
         %closeApp_Callback Executes after "Close Confirm" dialog window
@@ -755,12 +1057,18 @@ properties (Access = private)
             switch event.SelectedOption
                 case 'OK'
                     if isAcquiring
+                        closeTrazaCallback(app, [], [])
+                        
                         % Acquisition is currently on
-                        stop(app.DAQSession)
+%                         stop(app.DAQSession)
+%                         stop(app.DAQSession2)
                         stop(app.DAQClkTraceSession)
-                        stop(app.DAQScanSession)
-                        delete(app.TraceAvailableListener)
-                        delete(app.DAQSession)
+                        %stop(app.DAQScanSession)
+                        
+                        
+%                         delete(app.TraceAvailableListener)
+%                         delete(app.TraceAvailableListener2)
+%                         delete(app.DAQSession)
                         delete(app.DAQClkTraceSession)
                         delete(app.DAQScanSession)
 
@@ -1077,69 +1385,160 @@ properties (Access = private)
             
             try
                 
-%                 ctasBruto = [event.TimeStamps event.Data];
-%                 
 %                 assignin('base','ctasBruto',ctasBruto)
 %                 assignin('base','idxNoCts',idxNoCts)
 %                 assignin('base','idxCts',idxCts)
+
+                %=================== APD ===================
                 
-                preData = event.Data;
+                preDataAPD = event.Data(:,1);
                 
                 for i=1:length(idxNoCts)
-                    preData(idxNoCts(i,1):idxNoCts(i,2)) = [];
+                    preDataAPD(idxNoCts(i,1):idxNoCts(i,2)) = [];
                 end
                 
-                data = diff(preData);
+                dataAPD = diff(preDataAPD);
                 
                 nPuntos = app.ScanNpixelsEditField.Value;
                 integrationTime = (app.CtimemsEditField.Value)/1000;
-                bufferCuentas = zeros(nPuntos * nPuntos,1);
+                bufferCuentasAPD = zeros(nPuntos * nPuntos,1);
                 
                 for i=1:length(idxCts)
-                    bufferCuentas(i) = sum(  data(idxCts(i,1):idxCts(i,2))  )/integrationTime;
+                    bufferCuentasAPD(i) = sum(  dataAPD(idxCts(i,1):idxCts(i,2))  )/integrationTime;
                 end
                 
                 switch tarea
                     case 'scan'
-                        app.countsMatrix = reshape(bufferCuentas, nPuntos, nPuntos)';
-                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordCts, app.yCoordCts, app.countsMatrix);
-                        colorbar(app.UIAxes)
-                        xlim(app.UIAxes, [min(app.xCoordCts), max(app.xCoordCts)]);
-                        ylim(app.UIAxes, [min(app.yCoordCts), max(app.yCoordCts)]);
                         
-                        actualizarBarraColor(app, 'scan')
+                        app.countsMatrix = reshape(bufferCuentasAPD, nPuntos, nPuntos)';
+                        % Crear figura con scan en el infrarrojo
+                        figure('Name','APD')
+                        imagesc(reshape(bufferCuentasAPD, nPuntos, nPuntos))
+                        colormap jet
                         
-                        guardarRespaldoScan(app)
                     case 'zoom'
-                        app.countsZoom = reshape(bufferCuentas, nPuntos, nPuntos)';
-                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordsZoom, app.yCoordsZoom, app.countsZoom);
                         
-                        xlim(app.UIAxes, [min(app.xCoordsZoom), max(app.xCoordsZoom)]);
-                        ylim(app.UIAxes, [min(app.yCoordsZoom), max(app.yCoordsZoom)]);
-                        
-                        colorbar(app.UIAxes)
-                        
-                        actualizarBarraColor(app,'zoom')
+                        app.countsZoom = reshape(bufferCuentasAPD, nPuntos, nPuntos)';
+                        % Crear figura con scan en el infrarrojo
+                        figure('Name','APD ZOOM')
+                        imagesc(reshape(bufferCuentasAPD, nPuntos, nPuntos))
+                        colormap jet
                         
                 end
                 
                 
-                
-                
-                % Obtener la barra de herramientas del axes
-                tb = axtoolbar(app.UIAxes);
-                
-                % Eliminar herramientas específicas
-                delete(tb.Children);
-                figure
-                imagesc(app.countsMatrix)
-                disp(app.countsMatrix)
                 setAppViewState(app, 'scannerFinished')
                 
             catch ME
                 disp('Error in scanProcessData:');
                 disp(ME.message);
             end
+            
+        end
+        
+        function datosScanAPD2(app, event, idxNoCts, idxCts, tarea)
+            try
+                
+                %=================== INFRARROJO ===================
+                
+                preDataInfra = event.Data(:,1);
+                
+                for i=1:length(idxNoCts)
+                    preDataInfra(idxNoCts(i,1):idxNoCts(i,2)) = [];
+                end
+                
+                dataInfra = diff(preDataInfra);
+                
+                nPuntos = app.ScanNpixelsEditField.Value;
+                integrationTime = (app.CtimemsEditField.Value)/1000;
+                bufferCuentasInfra = zeros(nPuntos * nPuntos,1);
+                
+                for i=1:length(idxCts)
+                    bufferCuentasInfra(i) = sum(  dataInfra(idxCts(i,1):idxCts(i,2))  )/integrationTime;
+                end
+                
+                switch tarea
+                    case 'scan'
+                        
+                        app.countsMatrixAPD2 = reshape(bufferCuentasInfra, nPuntos, nPuntos)';
+                        % Crear figura con scan en el infrarrojo
+                        figure('Name','INFRARROJO')
+                        imagesc(reshape(bufferCuentasInfra, nPuntos, nPuntos))
+                        colormap jet
+                        
+                    case 'zoom'
+                        
+                        app.countsZoomAPD2 = reshape(bufferCuentasInfra, nPuntos, nPuntos)';
+                        % Crear figura con scan en el infrarrojo
+                        figure('Name','INFRARROJO ZOOM')
+                        imagesc(reshape(bufferCuentasInfra, nPuntos, nPuntos))
+                        colormap jet
+                        
+                end
+                
+                stop(app.DAQScanCtr2)
+                
+            catch ME
+                disp('Error in datosScanAPD2:');
+                disp(ME.message);
+            end
+        end
+        
+        function graficosGUIScan(app, event, tarea)
+            
+            if app.mostrarScanCont1
+                switch tarea
+                    case 'scan'
+                        
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordCts, app.yCoordCts, app.countsMatrix);
+                        colormap(app.UIAxes, "jet")
+                        colorbar(app.UIAxes)
+                        xlim(app.UIAxes, [min(app.xCoordCts), max(app.xCoordCts)]);
+                        ylim(app.UIAxes, [min(app.yCoordCts), max(app.yCoordCts)]);
+                        
+                        actualizarBarraColor(app, 'scan')
+                        
+                        
+                    case 'zoom'
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordsZoom, app.yCoordsZoom, app.countsZoom);
+                        xlim(app.UIAxes, [min(app.xCoordsZoom), max(app.xCoordsZoom)]);
+                        ylim(app.UIAxes, [min(app.yCoordsZoom), max(app.yCoordsZoom)]);
+                        colormap(app.UIAxes, "jet")
+                        colorbar(app.UIAxes)
+                        
+                        actualizarBarraColor(app,'zoom')
+                end
+                
+            else
+                
+                switch tarea
+                    case 'scan'
+                        
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordCts, app.yCoordCts, app.countsMatrixAPD2)';
+                        colorbar(app.UIAxes)
+                        xlim(app.UIAxes, [min(app.xCoordCts), max(app.xCoordCts)]);
+                        ylim(app.UIAxes, [min(app.yCoordCts), max(app.yCoordCts)]);
+                        
+                        actualizarBarraColor(app, 'scan')
+                        
+                        
+                    case 'zoom'
+                        
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordsZoom, app.yCoordsZoom, app.countsZoomAPD2)';
+                        xlim(app.UIAxes, [min(app.xCoordsZoom), max(app.xCoordsZoom)]);
+                        ylim(app.UIAxes, [min(app.yCoordsZoom), max(app.yCoordsZoom)]);
+                        
+                        colorbar(app.UIAxes)
+                        
+                        actualizarBarraColor(app,'zoom')
+                end
+                
+            end
+            
+            % Obtener la barra de herramientas del axes
+            tb = axtoolbar(app.UIAxes);
+            % Eliminar herramientas específicas
+            delete(tb.Children);
             
         end
         
@@ -1232,7 +1631,7 @@ properties (Access = private)
                 %Crear sesion principal para adquisición de cuentas
                 s_in = daq.createSession('ni');
                 
-                % Agregar un canal de entrada para contador
+                % Agregar un canal de entrada para contador APD
                 addCounterInputChannel(s_in, 'Dev1', 'ctr0', 'EdgeCount');
                 
                 % Configurar reloj para medir traza
@@ -1255,6 +1654,31 @@ properties (Access = private)
                 
                 % Inicializar listener como arreglo vacío.
                 app.TraceAvailableListener = [];
+                
+                %========================================================
+                %Crear sesion principal para adquisición de cuentas
+                s_in2 = daq.createSession('ni');
+                
+                % Detector infrarojo
+                addCounterInputChannel(s_in2, 'Dev1', 'ctr3', 'EdgeCount');
+                
+                % Agregar reloj a sesion de traza
+                s_in2.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
+                
+                % Configurar la tasa de muestreo igual a frec. del reloj
+                s_in2.Rate = app.DAQClkTraceSession.Channels.Frequency;
+                
+                % Recibir datos de manera continua
+                s_in2.IsContinuous = true;
+                
+                % Configurar cantidad de datos para llamar al listener
+                s_in2.NotifyWhenDataAvailableExceeds = app.NotifyScansSpinner.Value;
+                
+                % Guardar sesion como variable de la clase
+                app.DAQSession2 = s_in2;
+                
+                % Inicializar listener como arreglo vacío.
+                app.TraceAvailableListener2 = [];
             end
             
         end
@@ -1270,6 +1694,14 @@ properties (Access = private)
                 delete(app.DAQSession)
                 
                 app.DAQSession = [];
+                
+                %=========================
+                % detener y eliminar apd2
+                stop(app.DAQSession2)
+                release(app.DAQSession2)
+                delete(app.DAQSession2)
+                
+                app.DAQSession2 = [];
             end
             
             % Verificar si se estan usando los canales del piezo
@@ -1308,6 +1740,7 @@ properties (Access = private)
                 % Agregar un canal de entrada para contador
                 addCounterInputChannel(s_scan, 'Dev1', 'ctr0', 'EdgeCount');
                 
+                
                 % Configurar reloj
                 s_scan.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
                 
@@ -1330,6 +1763,28 @@ properties (Access = private)
                 
                 % Guardar sesion como variable de la clase
                 app.DAQScanSession = s_scan;
+                
+                % ==============================================================
+                % Agregar sesion para contador de APD2
+                
+                %Crear sesion principal para el scan
+                s_scanCtr = daq.createSession('ni');
+                
+                % Detector infrarojo
+                addCounterInputChannel(s_scanCtr, 'Dev1', 'ctr3', 'EdgeCount');
+                
+                % Configurar reloj
+                s_scanCtr.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
+                
+                % Configurar la tasa de muestreo igual a frec. del reloj
+                s_scanCtr.Rate = app.ScanFreqEditField.Value;
+                
+                % Recibir datos de manera continua
+                s_scanCtr.IsContinuous = true;
+                
+                % Guardar sesion como variable de la clase
+                app.DAQScanCtr2 = s_scanCtr;
+                
             end
             
             
@@ -1602,7 +2057,7 @@ properties (Access = private)
         end
         
         % FUNCIONES PARA OPTIMIZAR
-        function [posAjustada, anchuraAjustada] = optimizarPos(app, posiciones, ctasMedidas, anchura)
+        function [posAjustada, anchuraAjustada] = optimizarPos(app, posiciones, ctasMedidas, anchura, coordenada)
             
             % Definir la función gaussiana a ajustar
             
@@ -1634,11 +2089,34 @@ properties (Access = private)
             ajusy = calcularAjusteGaussiano(app, P(1), P(2), P(3), P(4), posiciones);
             
             % Graficar los datos originales y la curva ajustada.
-            figure
-            plot(posiciones, ctasMedidas, '*') % Datos medidos.
-            hold on
-            plot(posiciones, ajusy, 'LineWidth', 3) % Curva ajustada.
-            hold off
+            switch coordenada
+                case 'x' 
+                    app.figOptX = figure('Name','Coordenada X', 'Position', [10, 570, 560, 420]);
+                    ax = axes(app.figOptX);
+                    plot(ax, posiciones, ctasMedidas, '*');
+                    hold(ax, "on")
+                    plot(ax, posiciones, ajusy, 'LineWidth', 3)
+                    hold(ax, "off")
+                case 'y'
+                    app.figOptY = figure('Name','Coordenada Y', 'Position', [580, 570, 560, 420]);
+                    ax = axes(app.figOptY);
+                    plot(ax, posiciones, ctasMedidas, '*');
+                    hold(ax, "on")
+                    plot(ax, posiciones, ajusy, 'LineWidth', 3)
+                    hold(ax, "off")
+                case 'z'
+                    app.figOptZ = figure('Name','Coordenada Z', 'Position', [10, 100, 560, 420]);
+                    ax = axes(app.figOptZ);
+                    plot(ax, posiciones, ctasMedidas, '*');
+                    hold(ax, "on")
+                    plot(ax, posiciones, ajusy, 'LineWidth', 3)
+                    hold(ax, "off")
+            end
+%             figure
+%             plot(posiciones, ctasMedidas, '*') % Datos medidos.
+%             hold on
+%             plot(posiciones, ajusy, 'LineWidth', 3) % Curva ajustada.
+%             hold off
             
             % Si la anchura ajustada (P(2)) es muy diferente de la inicial (más del doble o menor a 0.1),
             % se mantiene la anchura inicial p2 para evitar un ajuste incorrecto.
@@ -1764,33 +2242,73 @@ properties (Access = private)
                 app.DataFIFOBuffer = [];
                 app.TimestampsFIFOBuffer = [];
                 
+                app.DataFIFOBufferInfrarrojo = [];
+                
                 % Crear figura externa a la app para mostrar traza
-                app.traceFigure = figure('Name','Traza', 'Position', [100, 100, 800, 600], ...
-                         'CloseRequestFcn', @(src, event) closeTrazaCallback(app, src, event));
                 
-                % Obtener el handle a los ejes de la figura
-                app.axesTrace = axes(app.traceFigure);
-                %Hacer plot sin datos
-                app.lineTrace = plot(app.axesTrace, NaN, 'LineWidth',3,"Color",'k');
+                app.traceFigure = figure('Name','Traza', 'Position', [910, 50, 1000, 800], ...
+                    'CloseRequestFcn', @(src, event) closeTrazaCallback(app, src, event));
                 
-                % Conf. título y etiquetas
-                title(app.axesTrace, 'Traza');
-                xlabel(app.axesTrace, 'u.a');
-                ylabel(app.axesTrace, 'cuentas/s');
+                % Crear el primer subplot para el gráfico principal
+                app.axesTraceLeft = subplot(2, 1, 1, 'Parent', app.traceFigure);
+                app.lineTrace = plot(app.axesTraceLeft, NaN, 'LineWidth', 3, "Color", 'k');
+                ylabel(app.axesTraceLeft, 'Cts/s', 'Color', 'k');
+                title(app.axesTraceLeft, 'Traza');
+                xlim(app.axesTraceLeft, [0, app.NBufferEditField.Value]);
+                %app.axesTraceLeft.YColor = 'k';
+                set(app.axesTraceLeft, 'FontSize', 32);
                 
-                xlim(app.axesTrace,[0, app.NBufferEditField.Value]);
-                set(app.axesTrace, 'FontSize', 32);
+                % Crear el segundo subplot para el gráfico infrarrojo
+                app.axesTraceRight = subplot(2, 1, 2, 'Parent', app.traceFigure);
+                app.lineTraceInfrarrojo = plot(app.axesTraceRight, NaN, 'LineWidth', 3, "Color", 'b');
+                ylabel(app.axesTraceRight, 'Cts/s', 'Color', 'k');
+                xlabel(app.axesTraceRight, 'u.a');
+                xlim(app.axesTraceRight, [0, app.NBufferEditField.Value]);
+                %app.axesTraceRight.YColor = 'b';
+                set(app.axesTraceRight, 'FontSize', 32);
+
+                
+%                 app.traceFigure = figure('Name','Traza', 'Position', [100, 100, 800, 600], ...
+%                          'CloseRequestFcn', @(src, event) closeTrazaCallback(app, src, event));
+%                 
+%                 % Obtener el handle a los ejes de la figura
+%                 app.axesTrace = axes(app.traceFigure);
+%                 %Hacer plot sin datos
+%                 yyaxis(app.axesTrace, 'left')
+%                 app.lineTrace = plot(app.axesTrace, NaN, 'LineWidth',3,"Color",'k');
+%                 ylabel(app.axesTrace, 'Cuentas/s', 'Color', 'k');
+%                 app.axesTrace.YColor = 'k';
+%                 % Plot infrarrojo
+%                 yyaxis(app.axesTrace, 'right')
+%                 app.lineTraceInfrarrojo = plot(app.axesTrace, NaN, 'LineWidth',3,"Color",'b');
+%                 %ylabel(app.axesTrace, 'Color', 'b');
+%                 app.axesTrace.YColor = 'b';
+%                 
+%                 
+%                 % Conf. título y etiquetas
+%                 title(app.axesTrace, 'Traza');
+%                 xlabel(app.axesTrace, 'u.a');
+%                 %ylabel(app.axesTrace, 'cuentas/s');
+%                 
+%                 xlim(app.axesTrace,[0, app.NBufferEditField.Value]);
+%                 set(app.axesTrace, 'FontSize', 32);
                 
                 %======================================================================
                 %======================================================================
                 
-                iniciarSesionReloj(app,'traza')
+                %iniciarSesionReloj(app,'traza')
                 
                 % Crear listener e iniciar en 2do plano sesion de adquisición
                 app.TraceAvailableListener = addlistener(app.DAQSession, 'DataAvailable', ...
                     @(src,event) dataAvailable_Callback(app, src, event));
                 
                 startBackground(app.DAQSession);
+                
+                % Listener 2da sesion traza
+                app.TraceAvailableListener2 = addlistener(app.DAQSession2, 'DataAvailable', ...
+                    @(src,event) procesarTraza2(app, src, event));
+                
+                startBackground(app.DAQSession2);
                 %======================================================================
                 %======================================================================
                 
@@ -1807,19 +2325,35 @@ properties (Access = private)
 
         % Value changed function: StopTraceButton
         function StopTraceButtonValueChanged(app, event)
-            
-            % Detener adquisición de datos
-            stop(app.DAQSession)
+            % Eliminar e inicializar listener a array vacío
+            delete(app.TraceAvailableListener2);
+            app.TraceAvailableListener2 = [];
             
             % Eliminar e inicializar listener a array vacío
             delete(app.TraceAvailableListener);
             app.TraceAvailableListener = [];
             
             % Setear handles de gráfico de traza a array vacios
+            app.lineTraceInfrarrojo = [];
+            
+            app.lineTrace = [];
+            
+            % Setear handles de gráfico de traza a array vacios
             delete(app.traceFigure)
             app.traceFigure = [];
             app.axesTrace = [];
-            app.lineTrace = [];
+            
+            % Detener adquisición de datos
+            stop(app.DAQSession)
+            
+            
+            
+            %==================================
+            % Eliminar sesion de traza 2
+            % Detener adquisición de datos
+            stop(app.DAQSession2)
+            
+            
             
             % Activar interacción con componentes de la UI
             if ~(isempty(app.DAQSesionCoordX))
@@ -1828,6 +2362,8 @@ properties (Access = private)
             else
                 setAppViewState(app, 'scannerFinished');
             end
+            
+            app.TrackerSwitch.Value = 'Off';
             
             
             % Verificar si hay que guardar archivos
@@ -1939,7 +2475,7 @@ properties (Access = private)
 
         % Button pushed function: LoadFigureButton
         function LoadFigureButtonPushed(app, event)
-            
+            % Se carga data elegida por usuario y se grafica apd excelitas
             
             if ~(isempty(app.DAQSesionCoordX))
                 % Definir la carpeta actual
@@ -1974,7 +2510,8 @@ properties (Access = private)
                     % Extraer coordenadas y datos de la estructura correspondiente
                     app.xCoordCts = dataStruct.data.x;
                     app.yCoordCts = dataStruct.data.y;
-                    app.countsMatrix = dataStruct.data.c;
+                    app.countsMatrix = dataStruct.data.excelitas;
+                    app.countsMatrixAPD2 = dataStruct.data.laserComp;
                     
                     % Leer voltajes actuales en piezo para cada coordenada
                     actualizarVoltajes(app)
@@ -2366,13 +2903,27 @@ properties (Access = private)
             %============================================================================
             %============ E L I M I N A R  T R A Z A  P R I N C I P A L =================
             % Eliminar gráfico de traza en caso de que esté abierto
-            
-            % Setear handles de gráfico de traza a array vacios
-            delete(app.traceFigure)
-            app.traceFigure = [];
-            app.axesTrace = [];
-            app.lineTrace = [];
-            
+            if ~(isempty(app.DAQSession))
+                stop(app.DAQSession)
+                release(app.DAQSession)
+                delete(app.DAQSession)
+                
+                app.DAQSession = [];
+                
+                %=========================
+                % detener y eliminar apd2
+                stop(app.DAQSession2)
+                release(app.DAQSession2)
+                delete(app.DAQSession2)
+                
+                app.DAQSession2 = [];
+                
+                % Setear handles de gráfico de traza a array vacios
+                delete(app.traceFigure)
+                app.traceFigure = [];
+                app.axesTrace = [];
+                app.lineTrace = [];
+            end
             
             %======================================================================
             %================= C R E A R  T R A Z A  S C A N ======================
@@ -2383,7 +2934,9 @@ properties (Access = private)
             
             
             % Crear figura externa a la app para mostrar traza
-            app.traceScanFigure = figure('Name','Traza Scan', 'Position', [100, 100, 800, 600]);
+            app.traceScanFigure = figure('Name','Traza Scan', 'Position', [100, 100, 800, 600], ...
+                'CloseRequestFcn', @(src, event) closeScanTrazaCallback(app, src, event));
+            
             
             % Obtener el handle a los ejes de la figura
             app.axesScanTrace = axes(app.traceScanFigure);
@@ -2472,14 +3025,9 @@ properties (Access = private)
             disp(2)
             disp(class(app.DAQScanSession))
             
-            
-            
             % Limpiar listener del scan
             delete(app.scanListener);
             app.scanListener = [];
-            
-            
-            
             
             %============================================================================
             %======================== C O O R D S.  S C A N =============================
@@ -2535,6 +3083,8 @@ properties (Access = private)
                 % Una vez adquiridos datos totales se activará listener
                 app.DAQScanSession.NotifyWhenDataAvailableExceeds = totalElementosOutput;
                 
+                app.DAQScanCtr2.NotifyWhenDataAvailableExceeds = totalElementosOutput;
+                
                 % Arreglo de voltajes a seguir en eje X
                 voltPathX = linspace(voltInicialX, voltFinalX, nPuntos)';
                 
@@ -2568,10 +3118,6 @@ properties (Access = private)
                 
                 % Output de voltajes a entregar en el piezo en dimension Y
                 outVoltajeY = repelem(voltPathY, periodoVoltX);
-                
-                disp(length(outVoltajeY))
-                disp(length(outVoltajeX))
-                
                 
                 disp(7)
                 disp(class(app.DAQScanSession))
@@ -2619,8 +3165,14 @@ properties (Access = private)
                 
                 queueOutputData(app.DAQScanSession,[outVoltajeX, outVoltajeY]);
                 pause(1)
-                disp("hola")
                 startBackground(app.DAQScanSession);
+                
+                % ==============================================
+                % Agregar listener par contador APD2
+                app.scanCtr2Listener = addlistener(app.DAQScanCtr2, 'DataAvailable', ...
+                    @(src, event) datosScanAPD2(app, event, idxNoCts, idxCts, 'scan'));
+                
+                startBackground(app.DAQScanCtr2);
                 
                 
                 
@@ -2677,17 +3229,20 @@ properties (Access = private)
                 %=========================================================================
                 %========== E L I M I N A R   T R A Z A   D E L   S C A N ================
                 % Detener adquisición de datos
-                stop(app.DAQTrazaScan)
+                if ~(isempty(app.DAQTrazaScan))
+                    stop(app.DAQTrazaScan)
+                    
+                    % Eliminar e inicializar listener a array vacío
+                    delete(app.trazaScanListener);
+                    app.trazaScanListener = [];
+                    
+                    % Setear handles de gráfico de traza a array vacios
+                    delete(app.traceScanFigure)
+                    app.traceScanFigure = [];
+                    app.axesScanTrace = [];
+                    app.lineScanTrace = [];
+                end
                 
-                % Eliminar e inicializar listener a array vacío
-                delete(app.trazaScanListener);
-                app.trazaScanListener = [];
-                
-                % Setear handles de gráfico de traza a array vacios
-                delete(app.traceScanFigure)
-                app.traceScanFigure = [];
-                app.axesScanTrace = [];
-                app.lineScanTrace = [];
                 
                 %====================================================
                 %========== A C T I V A R  P A N E L ================
@@ -2698,6 +3253,15 @@ properties (Access = private)
                 actualizarVoltajes(app)
                 
                 setAppViewState(app, 'configuration')
+                
+                if app.isZoom
+                    
+                    graficosGUIScan(app, event, 'zoom')
+                else
+                    graficosGUIScan(app, event, 'scan')
+                end
+                
+                guardarRespaldoScan(app);
                 
                 
                 % Inicializar líneas de coordenadas
@@ -2806,13 +3370,37 @@ properties (Access = private)
         % Value changed function: ZoomButton
         function ZoomButtonValueChanged(app, event)
             
+            % Eliminar gráficos y traza si esta corriendo
+            
+            if ~(isempty(app.DAQSession))
+                stop(app.DAQSession)
+                release(app.DAQSession)
+                delete(app.DAQSession)
+                
+                app.DAQSession = [];
+                
+                %=========================
+                % detener y eliminar apd2
+                stop(app.DAQSession2)
+                release(app.DAQSession2)
+                delete(app.DAQSession2)
+                
+                app.DAQSession2 = [];
+                
+                % Setear handles de gráfico de traza a array vacios
+                delete(app.traceFigure)
+                app.traceFigure = [];
+                app.axesTrace = [];
+                app.lineTrace = [];
+            end
+            
+            % Variable para determianr si al activar panel muestra zoom o
+            % scan completo
+            app.ZoomSwitch.Value = 'On';
+            ZoomSwitchValueChanged(app, event)
             % Eliminar gráfico de traza en caso de que esté abierto
             
-            % Setear handles de gráfico de traza a array vacios
-            delete(app.traceFigure)
-            app.traceFigure = [];
-            app.axesTrace = [];
-            app.lineTrace = [];
+            
             
             %============================================================================
             %==================== P A R A M E T R O S  S C A N ==========================
@@ -2939,6 +3527,7 @@ properties (Access = private)
                 disp(6)
                 % Una vez adquiridos datos totales se activará listener
                 app.DAQScanSession.NotifyWhenDataAvailableExceeds = totalElementosOutput;
+                app.DAQScanCtr2.NotifyWhenDataAvailableExceeds = totalElementosOutput;
                 
                 % Arreglo de voltajes a seguir en eje X
                 voltPathX = linspace(voltInicialX, voltFinalX, nPuntos)';
@@ -2971,10 +3560,6 @@ properties (Access = private)
                 
                 % Output de voltajes a entregar en el piezo en dimension Y
                 outVoltajeY = repelem(voltPathY, periodoVoltX);
-                
-                disp(length(outVoltajeY))
-                disp(length(outVoltajeX))
-                
                 
                 disp(7)
                 disp(class(app.DAQScanSession))
@@ -3024,6 +3609,14 @@ properties (Access = private)
                 pause(1)
                 startBackground(app.DAQScanSession);
                 
+                % ==============================================
+                
+                % Agregar listener par contador APD2
+                app.scanCtr2Listener = addlistener(app.DAQScanCtr2, 'DataAvailable', ...
+                    @(src, event) datosScanAPD2(app, event, idxNoCts, idxCts, 'zoom'));
+                
+                startBackground(app.DAQScanCtr2);
+                
                 
                 
             else
@@ -3072,10 +3665,40 @@ properties (Access = private)
             delete(app.hYLine)
             %===========================================================
             
+            % Si el tracking no está activado bloquear cambio de detector
+            % al empezar optimizacion
+            disp(1)
+            disp(app.TrackerSwitch.Value)
+            switch app.TrackerSwitch.Value
+                case 'Off'
+                    app.StartOptButton.Enable = 'off';
+                    app.Switch_2.Enable = 'off';
+                    app.TrackerSwitch.Enable = 'off';
+                    app.StopTraceButton.Enable = 'off';
+                    app.NBufferOptEditField.Enable = 'off';
+                    app.UpToleranceEditField.Enable = 'off';
+                    app.DownToleranceEditField.Enable = 'off';
+                    app.XYRangeEditField.Enable = 'off';
+                    app.ZRangeEditField.Enable = 'off';
+            end
+            disp(2)
+            
+            if ~(isempty(app.figOptX))
+                delete(app.figOptX)
+                delete(app.figOptY)
+                delete(app.figOptZ)
+                
+                app.figOptX = [];
+                app.figOptY = [];
+                app.figOptZ = [];
+                
+            end
+            
+            
+            
             % Verificar que coordenadas esten desacopladas
             if ~(isempty(app.DAQSesionCoordX))
                 
-                disp(app.DAQSesionCoordX.Rate)
                 
                 % Leer voltajes actuales en piezo
                 actualizarVoltajes(app);
@@ -3091,16 +3714,13 @@ properties (Access = private)
                 posicionesZ = vectorCoordsOptimiza(app, z, app.ZRangeEditField.Value, 100);
             
                 
-                assignin("base",'posicionesX', posicionesX)
-                
-                
                 %=========================================================================
                 %============================= O P T .  X ================================
                 
                 % Voltajes de salida
                 outVoltX = posicionesX*0.125;
-                
                 assignin('base',"outVoltX",outVoltX)
+                
                 
                 % Mover el piezo en la coordenada X al punto de partida
                 app.voltX = outVoltX(1);
@@ -3111,6 +3731,7 @@ properties (Access = private)
                 stop(app.DAQSesionCoordX)
                 app.DAQSesionCoordX.Rate = ceil(1/rateTrazaEff);
                 disp(app.DAQSesionCoordX.Rate)
+                
                 % Configurar acumulacion de cuentas
                 app.acumularCtas = true;
                 
@@ -3120,17 +3741,22 @@ properties (Access = private)
                 app.DAQSesionCoordX.startForeground();
                 app.acumularCtas = false;
                 
-                % Descartar primeras 50 cuentas
-                %app.ctasAcumOpt = app.ctasAcumOpt(51:end);
                 % Guardar cuentas en workspace
                 assignin('base','ctasAcumuladasX',app.ctasAcumuladasOpt);
                 
+                
                 % Obtener posición y anchura ajustadas
                 disp(length(app.ctasAcumuladasOpt)-length(posicionesX)+1)
+                
                 cuentasX = app.ctasAcumuladasOpt(length(app.ctasAcumuladasOpt)-length(posicionesX)+1:end);
+                
                 assignin('base','ctasX',cuentasX)
                 
-                [posAjustadaX, anchuraAjustadaX] = optimizarPos(app,posicionesX,cuentasX, 0.45)
+                [posAjustadaX, anchuraAjustadaX] = optimizarPos(app,posicionesX,cuentasX, 0.45, 'x')
+                
+                stop(app.DAQSesionCoordX)
+                app.DAQSesionCoordX.Rate = 1000;
+                disp(app.DAQSesionCoordX.Rate)
                 
                  % Moverse desde pos. actual a pos optima X
                 app.voltX = posAjustadaX * 0.125;
@@ -3145,10 +3771,6 @@ properties (Access = private)
                 
                 % Eliminar cuentas acumuladas de la app
                 app.ctasAcumuladasOpt = [];
-                
-                stop(app.DAQSesionCoordX)
-                app.DAQSesionCoordX.Rate = 1000;
-                disp(app.DAQSesionCoordX.Rate)
                 
                 %=========================================================================
                 %============================= O P T .  Y ================================
@@ -3185,7 +3807,7 @@ properties (Access = private)
                 cuentasY = app.ctasAcumuladasOpt(length(app.ctasAcumuladasOpt)-length(posicionesY)+1:end);
                 assignin('base','ctasY',cuentasY)
                 
-                [posAjustadaY, anchuraAjustadaY] = optimizarPos(app,posicionesY,cuentasY, 0.45)
+                [posAjustadaY, anchuraAjustadaY] = optimizarPos(app,posicionesY,cuentasY, 0.45, 'y')
                 
                  % Moverse desde pos. actual a pos optima X
                 app.voltY = posAjustadaY * 0.125;
@@ -3239,7 +3861,9 @@ properties (Access = private)
                 cuentasZ = app.ctasAcumuladasOpt(length(app.ctasAcumuladasOpt)-length(posicionesZ)+1:end);
                 assignin('base','ctasZ',cuentasZ)
                 
-                [posAjustadaZ, anchuraAjustadaZ] = optimizarPos(app,posicionesZ,cuentasZ, 0.45)
+                app.ctaMaxZ = max(cuentasZ);
+                
+                [posAjustadaZ, anchuraAjustadaZ] = optimizarPos(app,posicionesZ,cuentasZ, 0.45, 'z')
                 
                  % Moverse desde pos. actual a pos optima X
                 app.voltZ = posAjustadaZ * 0.125;
@@ -3254,6 +3878,21 @@ properties (Access = private)
                 stop(app.DAQSesionCoordZ)
                 app.DAQSesionCoordZ.Rate = 1000;
                 disp(app.DAQSesionCoordZ.Rate)
+                
+                % Si el tracking no estaba activado permitir cambio de detector
+                % al terminar optimizacion
+                switch app.TrackerSwitch.Value
+                case 'Off'
+                    app.StartOptButton.Enable = 'on';
+                    app.Switch_2.Enable = 'on';
+                    app.TrackerSwitch.Enable = 'on';
+                    app.StopTraceButton.Enable = 'on';
+                    app.NBufferOptEditField.Enable = 'on';
+                    app.UpToleranceEditField.Enable = 'on';
+                    app.DownToleranceEditField.Enable = 'on';
+                    app.XYRangeEditField.Enable = 'on';
+                    app.ZRangeEditField.Enable = 'on';
+                end
 
                 
             else
@@ -3281,13 +3920,93 @@ properties (Access = private)
 
         % Value changed function: TrackerSwitch
         function TrackerSwitchValueChanged(app, event)
-            value = app.TrackerSwitch.Value;
-            switch value
+            
+            switch app.TrackerSwitch.Value
                 case 'Off'
-                    app.trackerReady = false;
+                    % Detener timer
+                    stop(app.CheckConditionsOpt);
+                    
+                    % Activar cambio de detector
+                    app.Switch_2.Enable = 'on';
+                    app.StartOptButton.Enable = 'on';
+                    
+                    guardarRespaldoTracking(app)
+                    
+                    
                 case 'On'
-                    app.trackerReady = true;
+                    % Bloquear cambio de detector
+                    app.Switch_2.Enable = 'off';
+                    app.StartOptButton.Enable = 'off';
+                    
+                    % Activar botón de guardar coordenadas
+                    app.SaveCoordsButton.Enable = 'on';
+                    
+                    % Actualizar valores buffer y umbrales de tolerancia
+                    NBufferEditFieldValueChanged(app)
+                    UpToleranceEditFieldValueChanged(app)
+                    DownToleranceEditFieldValueChanged(app)
+                    
+                    % Limpiar coordenadas trackeadas
+                    app.trackingCoordX = [];
+                    app.trackingCoordY = [];
+                    app.trackingCoordZ = [];
+                    
+                    app.figCoordTracking = figure("Name", 'Coordenadas Optimizadas');
+                    
+                    app.axesTrackingX = subplot(2, 2, 1, 'Parent', app.figCoordTracking);
+                    app.lineTrackingX = plot(app.axesTrackingX, NaN, 'Marker', '*');
+                    title('X')
+                    
+                    app.axesTrackingY = subplot(2, 2, 2, 'Parent', app.figCoordTracking);
+                    app.lineTrackingY = plot(app.axesTrackingY, NaN, 'Marker', '*');
+                    title('Y')
+                    
+                    app.axesTrackingZ = subplot(2, 2, 3, 'Parent', app.figCoordTracking);
+                    app.lineTrackingZ = plot(app.axesTrackingZ, NaN, 'Marker', '*');
+                    title('Z')
+                    
+                    app.axesTrackingXY = subplot(2, 2, 4, 'Parent', app.figCoordTracking);
+                    app.lineTrackingXY = plot(app.axesTrackingXY, NaN, 'Marker', '*');
+                    title('X-Y')
+                
+                
+                    
+                    % Verificar si esta trackeando excelitas o lasercomp
+                    switch app.Switch_2.Value
+                        case 'Excelitas'
+                            % En excelitas consideramos valor medio MEAN
+                            app.mediaTracking = app.MeanEditField.Value;
+                            
+                            disp("Referencia Opt. " + app.mediaTracking)
+                            disp("Valor tolerancia bajada " + app.mediaTracking * app.umbralDownTracker)
+                            disp("Valor tolerancia subida " + app.mediaTracking * app.umbralUpTracker)
+                            
+                            % Configurar el temporizador en la inicialización de la app
+                            app.CheckConditionsOpt = timer('ExecutionMode', 'fixedRate', ...
+                                'Period', 0.1, ... % Ejecuta cada 100 ms
+                                'TimerFcn', @(~,~) conditionsOptExcelitas(app));
+                            
+                            % Inicia el temporizador cuando sea necesario
+                            start(app.CheckConditionsOpt);
+                        case 'Lasercomp'
+                            % En excelitas consideramos valor medio MEAN 2
+                            app.mediaTracking = app.Mean2EditField.Value;
+                            
+                            disp("Referencia Opt. " + app.mediaTracking)
+                            disp("Valor tolerancia bajada " + app.mediaTracking * app.umbralDownTracker)
+                            disp("Valor tolerancia subida " + app.mediaTracking * app.umbralUpTracker)
+                            
+                            % Configurar el temporizador en la inicialización de la app
+                            app.CheckConditionsOpt = timer('ExecutionMode', 'fixedRate', ...
+                                'Period', 0.1, ... % Ejecuta cada 100 ms
+                                'TimerFcn', @(~,~) conditionsOptLasercomp(app));
+                    end
+                    
+                    
             end
+            
+            
+
         end
 
         % Callback function
@@ -3347,6 +4066,135 @@ properties (Access = private)
             app.axesScanTrace = [];
             app.lineScanTrace = [];
         end
+
+        % Value changed function: Switch_2
+        function Switch_2ValueChanged(app, event)
+            value = app.Switch_2.Value;
+            switch value
+                case 'Excelitas'
+                    app.optimizarContador1 = true;
+                case 'Lasercomp'
+                    app.optimizarContador1 = false;
+            end
+        end
+
+        % Value changed function: Switch
+        function SwitchValueChanged(app, event)
+            value = app.Switch.Value;
+            app.matrixPlot = [];
+            switch value
+                case 'Excelitas'
+                    app.mostrarScanCont1 = true;
+                    if app.isZoom
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordsZoom, app.yCoordsZoom, app.countsZoom);
+                        xlim(app.UIAxes, [min(app.xCoordsZoom), max(app.xCoordsZoom)]);
+                        ylim(app.UIAxes, [min(app.yCoordsZoom), max(app.yCoordsZoom)]);
+                        
+                        colorbar(app.UIAxes)
+                        
+                        actualizarBarraColor(app,'zoom')
+                    else
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordCts, app.yCoordCts, app.countsMatrix);
+                        colorbar(app.UIAxes)
+                        xlim(app.UIAxes, [min(app.xCoordCts), max(app.xCoordCts)]);
+                        ylim(app.UIAxes, [min(app.yCoordCts), max(app.yCoordCts)]);
+                        
+                        actualizarBarraColor(app, 'scan')
+                        
+                    end
+                case 'Lasercomp'
+                    app.mostrarScanCont1 = false;
+                    if app.isZoom
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordsZoom, app.yCoordsZoom, app.countsZoomAPD2);
+                        xlim(app.UIAxes, [min(app.xCoordsZoom), max(app.xCoordsZoom)]);
+                        ylim(app.UIAxes, [min(app.yCoordsZoom), max(app.yCoordsZoom)]);
+                        
+                        colorbar(app.UIAxes)
+                        
+                        actualizarBarraColor(app,'zoom')
+                    else
+                        app.matrixPlot = imagesc(app.UIAxes,app.xCoordCts, app.yCoordCts, app.countsMatrixAPD2);
+                        colorbar(app.UIAxes)
+                        xlim(app.UIAxes, [min(app.xCoordCts), max(app.xCoordCts)]);
+                        ylim(app.UIAxes, [min(app.yCoordCts), max(app.yCoordCts)]);
+                        
+                        actualizarBarraColor(app, 'scan')
+                        
+                    end
+            end
+            
+            hold(app.UIAxes, 'on');
+            app.hXLine = xline(app.UIAxes, app.XcoordEditField.Value, 'k');
+            app.hYLine = yline(app.UIAxes, app.YcoordEditField.Value, 'k');
+            hold(app.UIAxes, 'off');
+            
+            % Obtener la barra de herramientas del axes
+            tb = axtoolbar(app.UIAxes);
+            % Eliminar herramientas específicas
+            delete(tb.Children);
+            
+            % Crear lsiteners de interaccion con figura para establecer
+            % coordenadas
+            set(app.matrixPlot, 'ButtonDownFcn', @(src, event)clickDown(app, src, event));
+            set(app.UIFigure, 'WindowButtonMotionFcn', @(src, event)whileClickDown(app, src, event));
+            set(app.UIFigure, 'WindowButtonUpFcn', @(src, event)clickUp(app, src, event));
+            
+            
+            % Desplazar coordenadas para evitar saltos
+            RightXButtonValueChanged(app,[])
+            pause(0.1)
+            LeftXButtonValueChanged(app,[])
+            pause(0.1)
+            UpYButtonValueChanged(app,[])
+            pause(0.1)
+            DownYButtonValueChanged(app,[])
+            
+            
+            
+        end
+
+        % Value changed function: ZoomSwitch
+        function ZoomSwitchValueChanged(app, event)
+            value = app.ZoomSwitch.Value;
+            switch value
+                case 'On'
+                    app.isZoom = true;
+                    app.Lamp.Enable = true;
+                case 'Off'
+                    app.isZoom = false;
+                    app.Lamp.Enable = false;
+            end
+        end
+
+        % Value changed function: NBufferOptEditField
+        function NBufferOptEditFieldValueChanged(app, event)
+            
+            bufferTracker = ceil(app.NBufferEditField.Value * app.NBufferOptEditField.Value/100);
+            disp("El buffer del tracking considera " + bufferTracker + " cuentas.")
+        end
+
+        % Value changed function: DownToleranceEditField
+        function DownToleranceEditFieldValueChanged(app, event)
+            % Actualizar porcentaje de tolerancia ante la caída de cuentas
+            app.umbralDownTracker = 1 - app.DownToleranceEditField.Value/100;
+            
+        end
+
+        % Value changed function: UpToleranceEditField
+        function UpToleranceEditFieldValueChanged(app, event)
+            % Actualizar valor para umbral superior de cuentas
+            app.umbralUpTracker = 1 + app.UpToleranceEditField.Value/100;
+        end
+
+        % Value changed function: SaveCoordsButton
+        function SaveCoordsButtonValueChanged(app, event)
+            
+            if ~(isempty(app.trackingCoordX))
+                guardarTracking(app)
+            else
+                disp("Las coordenadas de trackeo están vacías.")
+            end
+        end
     end
 
     % Component initialization
@@ -3395,9 +4243,10 @@ properties (Access = private)
             % Create StartTraceButton
             app.StartTraceButton = uibutton(app.PanelTraza, 'push');
             app.StartTraceButton.ButtonPushedFcn = createCallbackFcn(app, @StartTraceButtonPushed, true);
-            app.StartTraceButton.BackgroundColor = [0.4235 0.902 0.0824];
+            app.StartTraceButton.BackgroundColor = [0.5059 0.7804 0.5176];
             app.StartTraceButton.FontSize = 20;
             app.StartTraceButton.FontWeight = 'bold';
+            app.StartTraceButton.FontColor = [0.1294 0.1294 0.1294];
             app.StartTraceButton.Position = [15 80 119 40];
             app.StartTraceButton.Text = 'Start Trace';
 
@@ -3405,9 +4254,10 @@ properties (Access = private)
             app.StopTraceButton = uibutton(app.PanelTraza, 'state');
             app.StopTraceButton.ValueChangedFcn = createCallbackFcn(app, @StopTraceButtonValueChanged, true);
             app.StopTraceButton.Text = 'Stop Trace';
-            app.StopTraceButton.BackgroundColor = [0.9804 0.0784 0.0784];
+            app.StopTraceButton.BackgroundColor = [0.898 0.2235 0.2078];
             app.StopTraceButton.FontSize = 20;
             app.StopTraceButton.FontWeight = 'bold';
+            app.StopTraceButton.FontColor = [0.1294 0.1294 0.1294];
             app.StopTraceButton.Position = [12 13 122 41];
 
             % Create IntTimemsEditFieldLabel
@@ -3516,9 +4366,10 @@ properties (Access = private)
             % Create ScanButton
             app.ScanButton = uibutton(app.Panel4, 'push');
             app.ScanButton.ButtonPushedFcn = createCallbackFcn(app, @ScanButtonPushed, true);
-            app.ScanButton.BackgroundColor = [0 1 0];
+            app.ScanButton.BackgroundColor = [0.298 0.6863 0.3137];
             app.ScanButton.FontSize = 20;
             app.ScanButton.FontWeight = 'bold';
+            app.ScanButton.FontColor = [0.1294 0.1294 0.1294];
             app.ScanButton.Position = [12 219 138 45];
             app.ScanButton.Text = 'Scan';
 
@@ -3589,9 +4440,10 @@ properties (Access = private)
             % Create StopscanButton
             app.StopscanButton = uibutton(app.Panel4, 'push');
             app.StopscanButton.ButtonPushedFcn = createCallbackFcn(app, @StopscanButtonPushed, true);
-            app.StopscanButton.BackgroundColor = [0.9804 0.0784 0.0784];
+            app.StopscanButton.BackgroundColor = [0.8275 0.1843 0.1843];
             app.StopscanButton.FontSize = 20;
             app.StopscanButton.FontWeight = 'bold';
+            app.StopscanButton.FontColor = [0.1294 0.1294 0.1294];
             app.StopscanButton.Position = [312 219 138 45];
             app.StopscanButton.Text = 'Stop scan';
 
@@ -3646,9 +4498,10 @@ properties (Access = private)
             % Create SaveScanButton
             app.SaveScanButton = uibutton(app.Panel4, 'push');
             app.SaveScanButton.ButtonPushedFcn = createCallbackFcn(app, @SaveScanButtonPushed, true);
-            app.SaveScanButton.BackgroundColor = [0.1686 0.549 0.9294];
+            app.SaveScanButton.BackgroundColor = [0.2588 0.651 0.9608];
             app.SaveScanButton.FontSize = 20;
             app.SaveScanButton.FontWeight = 'bold';
+            app.SaveScanButton.FontColor = [0.1294 0.1294 0.1294];
             app.SaveScanButton.Position = [162 219 138 45];
             app.SaveScanButton.Text = 'Save Scan';
 
@@ -3730,7 +4583,7 @@ properties (Access = private)
             app.RemainingTimeScansEditFieldLabel.HorizontalAlignment = 'center';
             app.RemainingTimeScansEditFieldLabel.FontSize = 20;
             app.RemainingTimeScansEditFieldLabel.FontWeight = 'bold';
-            app.RemainingTimeScansEditFieldLabel.Position = [527 251 245 24];
+            app.RemainingTimeScansEditFieldLabel.Position = [505 251 245 24];
             app.RemainingTimeScansEditFieldLabel.Text = 'Remaining Time Scan (s)';
 
             % Create RemainingTimeScansEditField
@@ -3739,14 +4592,14 @@ properties (Access = private)
             app.RemainingTimeScansEditField.HorizontalAlignment = 'center';
             app.RemainingTimeScansEditField.FontSize = 20;
             app.RemainingTimeScansEditField.FontWeight = 'bold';
-            app.RemainingTimeScansEditField.Position = [601 208 100 25];
+            app.RemainingTimeScansEditField.Position = [579 208 100 25];
 
             % Create ZoffsetEditFieldLabel
             app.ZoffsetEditFieldLabel = uilabel(app.Panel4);
             app.ZoffsetEditFieldLabel.HorizontalAlignment = 'right';
             app.ZoffsetEditFieldLabel.FontSize = 20;
             app.ZoffsetEditFieldLabel.FontWeight = 'bold';
-            app.ZoffsetEditFieldLabel.Position = [471 162 78 24];
+            app.ZoffsetEditFieldLabel.Position = [484 162 78 24];
             app.ZoffsetEditFieldLabel.Text = 'Z offset';
 
             % Create ZoffsetEditField
@@ -3754,12 +4607,13 @@ properties (Access = private)
             app.ZoffsetEditField.Limits = [0 80];
             app.ZoffsetEditField.ValueDisplayFormat = '%.3f';
             app.ZoffsetEditField.FontSize = 20;
-            app.ZoffsetEditField.Position = [584 162 87 25];
+            app.ZoffsetEditField.Position = [597 162 87 25];
             app.ZoffsetEditField.Value = 40;
 
             % Create Panel5
             app.Panel5 = uipanel(app.GridLayout);
             app.Panel5.AutoResizeChildren = 'off';
+            app.Panel5.ForegroundColor = [0.1294 0.1294 0.1294];
             app.Panel5.Title = 'Panel5';
             app.Panel5.Layout.Row = [6 12];
             app.Panel5.Layout.Column = [4 6];
@@ -3768,50 +4622,60 @@ properties (Access = private)
             app.UpYButton = uibutton(app.Panel5, 'state');
             app.UpYButton.ValueChangedFcn = createCallbackFcn(app, @UpYButtonValueChanged, true);
             app.UpYButton.Text = 'Up Y';
+            app.UpYButton.BackgroundColor = [0.902 0.902 0.902];
             app.UpYButton.FontSize = 15;
             app.UpYButton.FontWeight = 'bold';
-            app.UpYButton.Position = [115 208 100 26];
+            app.UpYButton.FontColor = [0.1294 0.1294 0.1294];
+            app.UpYButton.Position = [121 174 100 26];
 
             % Create DownYButton
             app.DownYButton = uibutton(app.Panel5, 'state');
             app.DownYButton.ValueChangedFcn = createCallbackFcn(app, @DownYButtonValueChanged, true);
             app.DownYButton.Text = 'Down Y';
+            app.DownYButton.BackgroundColor = [0.902 0.902 0.902];
             app.DownYButton.FontSize = 15;
             app.DownYButton.FontWeight = 'bold';
-            app.DownYButton.Position = [115 132 100 26];
+            app.DownYButton.FontColor = [0.1294 0.1294 0.1294];
+            app.DownYButton.Position = [121 98 100 26];
 
             % Create RightXButton
             app.RightXButton = uibutton(app.Panel5, 'state');
             app.RightXButton.ValueChangedFcn = createCallbackFcn(app, @RightXButtonValueChanged, true);
             app.RightXButton.Text = 'Right X';
+            app.RightXButton.BackgroundColor = [0.8627 0.8627 0.8627];
             app.RightXButton.FontSize = 15;
             app.RightXButton.FontWeight = 'bold';
-            app.RightXButton.Position = [214 170 100 26];
+            app.RightXButton.FontColor = [0.1294 0.1294 0.1294];
+            app.RightXButton.Position = [220 136 100 26];
 
             % Create LeftXButton
             app.LeftXButton = uibutton(app.Panel5, 'state');
             app.LeftXButton.ValueChangedFcn = createCallbackFcn(app, @LeftXButtonValueChanged, true);
             app.LeftXButton.Text = 'Left X';
+            app.LeftXButton.BackgroundColor = [0.902 0.902 0.902];
             app.LeftXButton.FontSize = 15;
             app.LeftXButton.FontWeight = 'bold';
-            app.LeftXButton.Position = [15 170 100 26];
+            app.LeftXButton.FontColor = [0.1294 0.1294 0.1294];
+            app.LeftXButton.Position = [21 136 100 26];
 
             % Create DecZButton
             app.DecZButton = uibutton(app.Panel5, 'state');
             app.DecZButton.ValueChangedFcn = createCallbackFcn(app, @DecZButtonValueChanged, true);
             app.DecZButton.Text = 'Dec. Z';
-            app.DecZButton.BackgroundColor = [0.9804 0.0784 0.0784];
+            app.DecZButton.BackgroundColor = [0.902 0.902 0.902];
             app.DecZButton.FontSize = 18;
             app.DecZButton.FontWeight = 'bold';
+            app.DecZButton.FontColor = [0.1294 0.1294 0.1294];
             app.DecZButton.Position = [309 6 100 29];
 
             % Create IncZButton
             app.IncZButton = uibutton(app.Panel5, 'state');
             app.IncZButton.ValueChangedFcn = createCallbackFcn(app, @IncZButtonValueChanged, true);
             app.IncZButton.Text = 'Inc. Z';
-            app.IncZButton.BackgroundColor = [0.1686 0.549 0.9294];
+            app.IncZButton.BackgroundColor = [0.902 0.902 0.902];
             app.IncZButton.FontSize = 18;
             app.IncZButton.FontWeight = 'bold';
+            app.IncZButton.FontColor = [0.1294 0.1294 0.1294];
             app.IncZButton.Position = [309 328 100 29];
 
             % Create MovenmEditFieldLabel
@@ -3819,7 +4683,7 @@ properties (Access = private)
             app.MovenmEditFieldLabel.HorizontalAlignment = 'right';
             app.MovenmEditFieldLabel.FontSize = 18;
             app.MovenmEditFieldLabel.FontWeight = 'bold';
-            app.MovenmEditFieldLabel.Position = [60 285 95 22];
+            app.MovenmEditFieldLabel.Position = [177 292 95 22];
             app.MovenmEditFieldLabel.Text = {'Move (nm)'; ''};
 
             % Create MovenmEditField
@@ -3828,7 +4692,7 @@ properties (Access = private)
             app.MovenmEditField.ValueDisplayFormat = '%11.3g';
             app.MovenmEditField.FontSize = 18;
             app.MovenmEditField.FontWeight = 'bold';
-            app.MovenmEditField.Position = [170 284 100 23];
+            app.MovenmEditField.Position = [178 259 100 23];
             app.MovenmEditField.Value = 30;
 
             % Create MaxZEditFieldLabel
@@ -3836,7 +4700,7 @@ properties (Access = private)
             app.MaxZEditFieldLabel.HorizontalAlignment = 'right';
             app.MaxZEditFieldLabel.FontSize = 18;
             app.MaxZEditFieldLabel.FontWeight = 'bold';
-            app.MaxZEditFieldLabel.Position = [214 72 62 22];
+            app.MaxZEditFieldLabel.Position = [220 38 62 22];
             app.MaxZEditFieldLabel.Text = 'Max. Z';
 
             % Create MaxZEditField
@@ -3845,7 +4709,7 @@ properties (Access = private)
             app.MaxZEditField.ValueChangedFcn = createCallbackFcn(app, @MaxZEditFieldValueChanged, true);
             app.MaxZEditField.FontSize = 18;
             app.MaxZEditField.FontWeight = 'bold';
-            app.MaxZEditField.Position = [229 41 44 23];
+            app.MaxZEditField.Position = [235 7 44 23];
             app.MaxZEditField.Value = 80;
 
             % Create MinZEditFieldLabel
@@ -3853,7 +4717,7 @@ properties (Access = private)
             app.MinZEditFieldLabel.HorizontalAlignment = 'right';
             app.MinZEditFieldLabel.FontSize = 18;
             app.MinZEditFieldLabel.FontWeight = 'bold';
-            app.MinZEditFieldLabel.Position = [71 74 57 22];
+            app.MinZEditFieldLabel.Position = [77 40 57 22];
             app.MinZEditFieldLabel.Text = 'Min. Z';
 
             % Create MinZEditField
@@ -3862,14 +4726,15 @@ properties (Access = private)
             app.MinZEditField.ValueChangedFcn = createCallbackFcn(app, @MinZEditFieldValueChanged, true);
             app.MinZEditField.FontSize = 18;
             app.MinZEditField.FontWeight = 'bold';
-            app.MinZEditField.Position = [81 43 44 23];
+            app.MinZEditField.Position = [87 9 44 23];
 
             % Create ActPanelButton
             app.ActPanelButton = uibutton(app.Panel5, 'push');
             app.ActPanelButton.ButtonPushedFcn = createCallbackFcn(app, @ActPanelButtonPushed, true);
-            app.ActPanelButton.BackgroundColor = [1 0.4118 0.1608];
+            app.ActPanelButton.BackgroundColor = [0.3765 0.4902 0.5451];
             app.ActPanelButton.FontSize = 18;
             app.ActPanelButton.FontWeight = 'bold';
+            app.ActPanelButton.FontColor = [0.1294 0.1294 0.1294];
             app.ActPanelButton.Position = [15 354 133 44];
             app.ActPanelButton.Text = 'Act. Panel';
 
@@ -3877,9 +4742,10 @@ properties (Access = private)
             app.Goto000Button = uibutton(app.Panel5, 'state');
             app.Goto000Button.ValueChangedFcn = createCallbackFcn(app, @Goto000ButtonValueChanged, true);
             app.Goto000Button.Text = 'Go to (0, 0, 0)';
-            app.Goto000Button.BackgroundColor = [0.2196 0.9804 0.1804];
+            app.Goto000Button.BackgroundColor = [0.8627 0.8627 0.902];
             app.Goto000Button.FontSize = 18;
             app.Goto000Button.FontWeight = 'bold';
+            app.Goto000Button.FontColor = [0.1294 0.1294 0.1294];
             app.Goto000Button.Position = [164 354 129 44];
 
             % Create ZSliderLabel
@@ -3898,6 +4764,15 @@ properties (Access = private)
             app.ZSlider.FontSize = 18;
             app.ZSlider.FontWeight = 'bold';
             app.ZSlider.Position = [350 53 3 254];
+
+            % Create Switch
+            app.Switch = uiswitch(app.Panel5, 'toggle');
+            app.Switch.Items = {'Lasercomp', 'Excelitas'};
+            app.Switch.ValueChangedFcn = createCallbackFcn(app, @SwitchValueChanged, true);
+            app.Switch.FontSize = 20;
+            app.Switch.FontWeight = 'bold';
+            app.Switch.Position = [47 241 31 71];
+            app.Switch.Value = 'Excelitas';
 
             % Create Panel6
             app.Panel6 = uipanel(app.GridLayout);
@@ -3953,6 +4828,38 @@ properties (Access = private)
             app.ZcoordEditField.FontWeight = 'bold';
             app.ZcoordEditField.Position = [617 59 100 23];
 
+            % Create Mean2EditFieldLabel
+            app.Mean2EditFieldLabel = uilabel(app.Panel6);
+            app.Mean2EditFieldLabel.HorizontalAlignment = 'right';
+            app.Mean2EditFieldLabel.FontSize = 28;
+            app.Mean2EditFieldLabel.FontWeight = 'bold';
+            app.Mean2EditFieldLabel.Position = [13 10 100 34];
+            app.Mean2EditFieldLabel.Text = 'Mean 2';
+
+            % Create Mean2EditField
+            app.Mean2EditField = uieditfield(app.Panel6, 'numeric');
+            app.Mean2EditField.ValueDisplayFormat = '%.2e';
+            app.Mean2EditField.Editable = 'off';
+            app.Mean2EditField.FontSize = 28;
+            app.Mean2EditField.FontWeight = 'bold';
+            app.Mean2EditField.Position = [128 10 180 34];
+
+            % Create STD2EditFieldLabel
+            app.STD2EditFieldLabel = uilabel(app.Panel6);
+            app.STD2EditFieldLabel.HorizontalAlignment = 'right';
+            app.STD2EditFieldLabel.FontSize = 28;
+            app.STD2EditFieldLabel.FontWeight = 'bold';
+            app.STD2EditFieldLabel.Position = [402 10 85 34];
+            app.STD2EditFieldLabel.Text = 'STD 2';
+
+            % Create STD2EditField
+            app.STD2EditField = uieditfield(app.Panel6, 'numeric');
+            app.STD2EditField.ValueDisplayFormat = '%.2e';
+            app.STD2EditField.Editable = 'off';
+            app.STD2EditField.FontSize = 28;
+            app.STD2EditField.FontWeight = 'bold';
+            app.STD2EditField.Position = [519 10 179 34];
+
             % Create Panel7
             app.Panel7 = uipanel(app.GridLayout);
             app.Panel7.Title = 'Panel7';
@@ -3962,48 +4869,52 @@ properties (Access = private)
             % Create LoadFigureButton
             app.LoadFigureButton = uibutton(app.Panel7, 'push');
             app.LoadFigureButton.ButtonPushedFcn = createCallbackFcn(app, @LoadFigureButtonPushed, true);
-            app.LoadFigureButton.BackgroundColor = [0 0 0];
+            app.LoadFigureButton.BackgroundColor = [0.298 0.6863 0.6471];
             app.LoadFigureButton.FontSize = 18;
             app.LoadFigureButton.FontWeight = 'bold';
-            app.LoadFigureButton.FontColor = [1 1 1];
-            app.LoadFigureButton.Position = [26 102 141 43];
+            app.LoadFigureButton.FontColor = [0.1294 0.1294 0.1294];
+            app.LoadFigureButton.Position = [102 102 141 43];
             app.LoadFigureButton.Text = 'Load Figure';
 
             % Create SetoffsetButton
             app.SetoffsetButton = uibutton(app.Panel7, 'state');
             app.SetoffsetButton.ValueChangedFcn = createCallbackFcn(app, @SetoffsetButtonValueChanged, true);
             app.SetoffsetButton.Text = 'Set offset';
-            app.SetoffsetButton.BackgroundColor = [1 1 0.0706];
+            app.SetoffsetButton.BackgroundColor = [1 0.5961 0];
             app.SetoffsetButton.FontSize = 18;
             app.SetoffsetButton.FontWeight = 'bold';
-            app.SetoffsetButton.Position = [192 101 141 44];
+            app.SetoffsetButton.FontColor = [0.1294 0.1294 0.1294];
+            app.SetoffsetButton.Position = [268 101 141 44];
 
             % Create ZoomButton
             app.ZoomButton = uibutton(app.Panel7, 'state');
             app.ZoomButton.ValueChangedFcn = createCallbackFcn(app, @ZoomButtonValueChanged, true);
             app.ZoomButton.Text = 'Zoom';
-            app.ZoomButton.BackgroundColor = [0.2196 0.9804 0.1804];
+            app.ZoomButton.BackgroundColor = [0.298 0.6863 0.3137];
             app.ZoomButton.FontSize = 18;
             app.ZoomButton.FontWeight = 'bold';
-            app.ZoomButton.Position = [16 43 100 29];
+            app.ZoomButton.FontColor = [0.1294 0.1294 0.1294];
+            app.ZoomButton.Position = [92 43 100 29];
 
             % Create SetFigButton
             app.SetFigButton = uibutton(app.Panel7, 'state');
             app.SetFigButton.ValueChangedFcn = createCallbackFcn(app, @SetFigButtonValueChanged, true);
             app.SetFigButton.Text = 'Set Fig.';
-            app.SetFigButton.BackgroundColor = [1 1 0.0706];
+            app.SetFigButton.BackgroundColor = [1 0.8353 0.3098];
             app.SetFigButton.FontSize = 18;
             app.SetFigButton.FontWeight = 'bold';
-            app.SetFigButton.Position = [129 43 100 29];
+            app.SetFigButton.FontColor = [0.1294 0.1294 0.1294];
+            app.SetFigButton.Position = [205 43 100 29];
 
             % Create PrevFigButton
             app.PrevFigButton = uibutton(app.Panel7, 'state');
             app.PrevFigButton.ValueChangedFcn = createCallbackFcn(app, @PrevFigButtonValueChanged, true);
             app.PrevFigButton.Text = 'Prev. Fig.';
-            app.PrevFigButton.BackgroundColor = [1 0.4118 0.1608];
+            app.PrevFigButton.BackgroundColor = [0.6196 0.6196 0.6196];
             app.PrevFigButton.FontSize = 18;
             app.PrevFigButton.FontWeight = 'bold';
-            app.PrevFigButton.Position = [251 43 100 29];
+            app.PrevFigButton.FontColor = [0.1294 0.1294 0.1294];
+            app.PrevFigButton.Position = [327 43 100 29];
 
             % Create MinColorbarEditFieldLabel
             app.MinColorbarEditFieldLabel = uilabel(app.Panel7);
@@ -4041,78 +4952,76 @@ properties (Access = private)
             app.SavezoomButton = uibutton(app.Panel7, 'state');
             app.SavezoomButton.ValueChangedFcn = createCallbackFcn(app, @SavezoomButtonValueChanged, true);
             app.SavezoomButton.Text = 'Save zoom';
-            app.SavezoomButton.BackgroundColor = [0.1686 0.549 0.9294];
+            app.SavezoomButton.BackgroundColor = [0.2588 0.651 0.9608];
             app.SavezoomButton.FontSize = 18;
             app.SavezoomButton.FontWeight = 'bold';
-            app.SavezoomButton.Position = [73 1 110 29];
+            app.SavezoomButton.FontColor = [0.1294 0.1294 0.1294];
+            app.SavezoomButton.Position = [149 1 110 29];
 
             % Create ZoomSizeumEditFieldLabel
             app.ZoomSizeumEditFieldLabel = uilabel(app.Panel7);
             app.ZoomSizeumEditFieldLabel.HorizontalAlignment = 'right';
             app.ZoomSizeumEditFieldLabel.FontSize = 18;
             app.ZoomSizeumEditFieldLabel.FontWeight = 'bold';
-            app.ZoomSizeumEditFieldLabel.Position = [392 125 139 22];
+            app.ZoomSizeumEditFieldLabel.Position = [451 110 139 22];
             app.ZoomSizeumEditFieldLabel.Text = 'Zoom Size (um)';
 
             % Create ZoomSizeumEditField
             app.ZoomSizeumEditField = uieditfield(app.Panel7, 'numeric');
             app.ZoomSizeumEditField.Limits = [1 30];
             app.ZoomSizeumEditField.FontSize = 18;
-            app.ZoomSizeumEditField.Position = [435 102 54 23];
+            app.ZoomSizeumEditField.Position = [494 87 54 23];
             app.ZoomSizeumEditField.Value = 2;
 
             % Create CleanFigButton
             app.CleanFigButton = uibutton(app.Panel7, 'state');
             app.CleanFigButton.ValueChangedFcn = createCallbackFcn(app, @CleanFigButtonValueChanged, true);
             app.CleanFigButton.Text = 'Clean Fig.';
-            app.CleanFigButton.BackgroundColor = [0.9804 0.0784 0.0784];
+            app.CleanFigButton.BackgroundColor = [0.898 0.2235 0.2078];
             app.CleanFigButton.FontSize = 18;
             app.CleanFigButton.FontWeight = 'bold';
-            app.CleanFigButton.Position = [212 1 102 29];
+            app.CleanFigButton.FontColor = [0.1294 0.1294 0.1294];
+            app.CleanFigButton.Position = [288 1 102 29];
+
+            % Create Lamp
+            app.Lamp = uilamp(app.Panel7);
+            app.Lamp.Enable = 'off';
+            app.Lamp.Position = [556 39 20 20];
+
+            % Create ZoomSwitchLabel
+            app.ZoomSwitchLabel = uilabel(app.Panel7);
+            app.ZoomSwitchLabel.HorizontalAlignment = 'center';
+            app.ZoomSwitchLabel.FontSize = 18;
+            app.ZoomSwitchLabel.FontWeight = 'bold';
+            app.ZoomSwitchLabel.Position = [494 37 54 22];
+            app.ZoomSwitchLabel.Text = 'Zoom';
+
+            % Create ZoomSwitch
+            app.ZoomSwitch = uiswitch(app.Panel7, 'slider');
+            app.ZoomSwitch.ValueChangedFcn = createCallbackFcn(app, @ZoomSwitchValueChanged, true);
+            app.ZoomSwitch.FontSize = 18;
+            app.ZoomSwitch.Position = [495 16 51 22];
 
             % Create Panel3
             app.Panel3 = uipanel(app.GridLayout);
             app.Panel3.AutoResizeChildren = 'off';
             app.Panel3.Title = 'Panel3';
             app.Panel3.Layout.Row = [10 12];
-            app.Panel3.Layout.Column = [1 2];
-
-            % Create TrackerSwitchLabel
-            app.TrackerSwitchLabel = uilabel(app.Panel3);
-            app.TrackerSwitchLabel.HorizontalAlignment = 'center';
-            app.TrackerSwitchLabel.FontSize = 18;
-            app.TrackerSwitchLabel.FontWeight = 'bold';
-            app.TrackerSwitchLabel.Position = [35 126 70 22];
-            app.TrackerSwitchLabel.Text = 'Tracker';
-
-            % Create TrackerSwitch
-            app.TrackerSwitch = uiswitch(app.Panel3, 'slider');
-            app.TrackerSwitch.ValueChangedFcn = createCallbackFcn(app, @TrackerSwitchValueChanged, true);
-            app.TrackerSwitch.FontSize = 18;
-            app.TrackerSwitch.Position = [44 105 51 22];
-
-            % Create StartOptButton
-            app.StartOptButton = uibutton(app.Panel3, 'state');
-            app.StartOptButton.ValueChangedFcn = createCallbackFcn(app, @StartOptButtonValueChanged, true);
-            app.StartOptButton.Text = 'Start Opt.';
-            app.StartOptButton.BackgroundColor = [0.2196 0.9804 0.1804];
-            app.StartOptButton.FontSize = 18;
-            app.StartOptButton.FontWeight = 'bold';
-            app.StartOptButton.Position = [161 105 100 29];
+            app.Panel3.Layout.Column = [2 3];
 
             % Create XYRangeEditFieldLabel
             app.XYRangeEditFieldLabel = uilabel(app.Panel3);
             app.XYRangeEditFieldLabel.HorizontalAlignment = 'center';
             app.XYRangeEditFieldLabel.FontSize = 18;
             app.XYRangeEditFieldLabel.FontWeight = 'bold';
-            app.XYRangeEditFieldLabel.Position = [18 53 96 22];
+            app.XYRangeEditFieldLabel.Position = [43 36 96 22];
             app.XYRangeEditFieldLabel.Text = 'X-Y Range';
 
             % Create XYRangeEditField
             app.XYRangeEditField = uieditfield(app.Panel3, 'numeric');
             app.XYRangeEditField.FontSize = 18;
             app.XYRangeEditField.FontWeight = 'bold';
-            app.XYRangeEditField.Position = [13 23 105 23];
+            app.XYRangeEditField.Position = [38 6 105 23];
             app.XYRangeEditField.Value = 800;
 
             % Create ZRangeEditFieldLabel
@@ -4120,15 +5029,116 @@ properties (Access = private)
             app.ZRangeEditFieldLabel.HorizontalAlignment = 'center';
             app.ZRangeEditFieldLabel.FontSize = 18;
             app.ZRangeEditFieldLabel.FontWeight = 'bold';
-            app.ZRangeEditFieldLabel.Position = [172 49 77 22];
+            app.ZRangeEditFieldLabel.Position = [179 36 77 22];
             app.ZRangeEditFieldLabel.Text = 'Z Range';
 
             % Create ZRangeEditField
             app.ZRangeEditField = uieditfield(app.Panel3, 'numeric');
             app.ZRangeEditField.FontSize = 18;
             app.ZRangeEditField.FontWeight = 'bold';
-            app.ZRangeEditField.Position = [158 19 105 23];
+            app.ZRangeEditField.Position = [165 6 105 23];
             app.ZRangeEditField.Value = 1800;
+
+            % Create NBufferOptLabel
+            app.NBufferOptLabel = uilabel(app.Panel3);
+            app.NBufferOptLabel.HorizontalAlignment = 'center';
+            app.NBufferOptLabel.FontSize = 18;
+            app.NBufferOptLabel.FontWeight = 'bold';
+            app.NBufferOptLabel.Position = [38 126 150 22];
+            app.NBufferOptLabel.Text = 'N Buffer Opt. (%)';
+
+            % Create NBufferOptEditField
+            app.NBufferOptEditField = uieditfield(app.Panel3, 'numeric');
+            app.NBufferOptEditField.Limits = [0 100];
+            app.NBufferOptEditField.ValueChangedFcn = createCallbackFcn(app, @NBufferOptEditFieldValueChanged, true);
+            app.NBufferOptEditField.FontSize = 18;
+            app.NBufferOptEditField.FontWeight = 'bold';
+            app.NBufferOptEditField.Position = [227 126 37 23];
+            app.NBufferOptEditField.Value = 30;
+
+            % Create UpToleranceEditFieldLabel
+            app.UpToleranceEditFieldLabel = uilabel(app.Panel3);
+            app.UpToleranceEditFieldLabel.HorizontalAlignment = 'center';
+            app.UpToleranceEditFieldLabel.FontSize = 18;
+            app.UpToleranceEditFieldLabel.FontWeight = 'bold';
+            app.UpToleranceEditFieldLabel.Position = [38 96 151 22];
+            app.UpToleranceEditFieldLabel.Text = 'Up Tolerance (%)';
+
+            % Create UpToleranceEditField
+            app.UpToleranceEditField = uieditfield(app.Panel3, 'numeric');
+            app.UpToleranceEditField.Limits = [0 100];
+            app.UpToleranceEditField.ValueChangedFcn = createCallbackFcn(app, @UpToleranceEditFieldValueChanged, true);
+            app.UpToleranceEditField.FontSize = 18;
+            app.UpToleranceEditField.FontWeight = 'bold';
+            app.UpToleranceEditField.Position = [227 98 37 23];
+            app.UpToleranceEditField.Value = 30;
+
+            % Create DownToleranceEditFieldLabel
+            app.DownToleranceEditFieldLabel = uilabel(app.Panel3);
+            app.DownToleranceEditFieldLabel.HorizontalAlignment = 'center';
+            app.DownToleranceEditFieldLabel.FontSize = 18;
+            app.DownToleranceEditFieldLabel.FontWeight = 'bold';
+            app.DownToleranceEditFieldLabel.Position = [38 67 176 22];
+            app.DownToleranceEditFieldLabel.Text = 'Down Tolerance (%)';
+
+            % Create DownToleranceEditField
+            app.DownToleranceEditField = uieditfield(app.Panel3, 'numeric');
+            app.DownToleranceEditField.Limits = [0 100];
+            app.DownToleranceEditField.ValueChangedFcn = createCallbackFcn(app, @DownToleranceEditFieldValueChanged, true);
+            app.DownToleranceEditField.FontSize = 18;
+            app.DownToleranceEditField.FontWeight = 'bold';
+            app.DownToleranceEditField.Position = [227 67 37 23];
+            app.DownToleranceEditField.Value = 10;
+
+            % Create Panel8
+            app.Panel8 = uipanel(app.GridLayout);
+            app.Panel8.ForegroundColor = [0.1294 0.1294 0.1294];
+            app.Panel8.Title = 'Panel8';
+            app.Panel8.Layout.Row = [10 14];
+            app.Panel8.Layout.Column = 1;
+
+            % Create StartOptButton
+            app.StartOptButton = uibutton(app.Panel8, 'state');
+            app.StartOptButton.ValueChangedFcn = createCallbackFcn(app, @StartOptButtonValueChanged, true);
+            app.StartOptButton.Text = 'Start Opt.';
+            app.StartOptButton.BackgroundColor = [0.7412 0.7412 0.7412];
+            app.StartOptButton.FontSize = 18;
+            app.StartOptButton.FontWeight = 'bold';
+            app.StartOptButton.FontColor = [0.1294 0.1294 0.1294];
+            app.StartOptButton.Position = [15 233 100 29];
+
+            % Create Switch_2
+            app.Switch_2 = uiswitch(app.Panel8, 'toggle');
+            app.Switch_2.Items = {'Lasercomp', 'Excelitas'};
+            app.Switch_2.ValueChangedFcn = createCallbackFcn(app, @Switch_2ValueChanged, true);
+            app.Switch_2.FontSize = 18;
+            app.Switch_2.FontWeight = 'bold';
+            app.Switch_2.Position = [58 144 23 52];
+            app.Switch_2.Value = 'Excelitas';
+
+            % Create SaveCoordsButton
+            app.SaveCoordsButton = uibutton(app.Panel8, 'state');
+            app.SaveCoordsButton.ValueChangedFcn = createCallbackFcn(app, @SaveCoordsButtonValueChanged, true);
+            app.SaveCoordsButton.Enable = 'off';
+            app.SaveCoordsButton.Text = 'Save Coords.';
+            app.SaveCoordsButton.BackgroundColor = [0.2588 0.651 0.9608];
+            app.SaveCoordsButton.FontSize = 18;
+            app.SaveCoordsButton.FontWeight = 'bold';
+            app.SaveCoordsButton.Position = [4 13 131 29];
+
+            % Create TrackerSwitchLabel
+            app.TrackerSwitchLabel = uilabel(app.Panel8);
+            app.TrackerSwitchLabel.HorizontalAlignment = 'center';
+            app.TrackerSwitchLabel.FontSize = 18;
+            app.TrackerSwitchLabel.FontWeight = 'bold';
+            app.TrackerSwitchLabel.Position = [36 81 70 22];
+            app.TrackerSwitchLabel.Text = 'Tracker';
+
+            % Create TrackerSwitch
+            app.TrackerSwitch = uiswitch(app.Panel8, 'slider');
+            app.TrackerSwitch.ValueChangedFcn = createCallbackFcn(app, @TrackerSwitchValueChanged, true);
+            app.TrackerSwitch.FontSize = 18;
+            app.TrackerSwitch.Position = [45 60 51 22];
 
             % Show the figure after all components are created
             app.UIFigure.Visible = 'on';
