@@ -75,7 +75,35 @@ classdef DAQDataAnalyzer_exported < matlab.apps.AppBase
         UpToleranceEditFieldLabel    matlab.ui.control.Label
         UpToleranceEditField         matlab.ui.control.NumericEditField
         SaveCoordsButton             matlab.ui.control.StateButton
-        Tab                          matlab.ui.container.Tab
+        CWTab                        matlab.ui.container.Tab
+        PowerdBmEditField_2Label     matlab.ui.control.Label
+        PowerdBmEditField_2          matlab.ui.control.NumericEditField
+        FreqGHzEditFieldLabel        matlab.ui.control.Label
+        FreqGHzEditField             matlab.ui.control.NumericEditField
+        RFSwitchLabel                matlab.ui.control.Label
+        RFSwitch                     matlab.ui.control.ToggleSwitch
+        DISCONNECTMWButton           matlab.ui.control.Button
+        CONNECTMWButton              matlab.ui.control.StateButton
+        LampMW                       matlab.ui.control.Lamp
+        ESRTab                       matlab.ui.container.Tab
+        SWEEPButton                  matlab.ui.control.StateButton
+        FreqStartGHzEditFieldLabel   matlab.ui.control.Label
+        FreqStartGHzEditField        matlab.ui.control.NumericEditField
+        FreqStopGHzEditFieldLabel    matlab.ui.control.Label
+        FreqStopGHzEditField         matlab.ui.control.NumericEditField
+        DTimemsEditFieldLabel        matlab.ui.control.Label
+        DTimemsEditField             matlab.ui.control.NumericEditField
+        PointsEditFieldLabel         matlab.ui.control.Label
+        PointsEditField              matlab.ui.control.NumericEditField
+        RepetitionsEditFieldLabel    matlab.ui.control.Label
+        RepetitionsEditField         matlab.ui.control.NumericEditField
+        CyclesEditFieldLabel         matlab.ui.control.Label
+        CyclesEditField              matlab.ui.control.NumericEditField
+        PowerdBmEditFieldLabel       matlab.ui.control.Label
+        PowerdBmEditField            matlab.ui.control.NumericEditField
+        STOPSWEEPButton              matlab.ui.control.Button
+        SAVESWEEPButton              matlab.ui.control.Button
+        LOADSWEEPButton              matlab.ui.control.StateButton
         STDC2EditFieldLabel          matlab.ui.control.Label
         STDC2EditField               matlab.ui.control.NumericEditField
         MeanC2EditFieldLabel         matlab.ui.control.Label
@@ -318,7 +346,48 @@ properties (Access = private)
         TempFile % Handle of opened binary file, acquired data is logged to this file during acquisition
         Filename = datestr(datetime('now'), 'yyyy-mm-dd_HHMMSS_TRA') % Default MAT file name at app start
         Filepath = pwd % Default folder for saving the MAT file at app start
- 
+        %==================================================================================
+        %==================================================================================
+        
+        % VARIABLES ASOCIADAS A GENERADOR DE FUNCIONES
+        
+        anapicoSession = []; % Variable to store the session of the MW Gen.
+        
+        daqTriggerSesion = []; % Session to trigger the MW Gen.
+        
+        DAQScanSweepSession = []; %Session to handle the sweep and scan
+        
+        freqSwep % List of swept frequencies
+        
+        triggerOutput % Set of voltage to triggers the daq session and MW Gen.
+        
+        sweepCountsListener = []; % Listener associated to sweeps
+        
+        ctasSweep = []; % counts received during the sweep
+        
+        lineNumber = 0; % Variable to control the number of repetitions did by the MW generator
+        
+        ctasMeanSweep = [];
+        rawData = []
+        
+        cycleNumber = 1;
+        
+        axesMeanTrace = []; % media movil
+        lineMeanTrace = []; % media movil sublot
+        
+        movingAverageBuffer = []; % Buffer para media movil
+        
+        
+        rfState = false % Variable to track the current state of RF
+        DAQRFSession = []; % Daq session to handle counts acquired while RF is on
+        
+        RFCountsListener = []; 
+        
+        DataFIFOBufferRF = [];
+        RFFigure = [];
+        axesRF = [];
+        lineRF = [];
+        
         
        
     end
@@ -541,6 +610,25 @@ properties (Access = private)
             app.lineScanTrace = [];
             
             app.DataFIFOBufferScanTrace = [];
+            
+            
+        end
+        
+        function closeFigRFCallback(app, src, event)
+            % Detener adquisición de datos
+            stop(app.DAQRFSession)
+            
+            % Eliminar e inicializar listener a array vacío
+            delete(app.RFCountsListener);
+            app.RFCountsListener = [];
+            
+            % Setear handles de gráfico de traza a array vacios
+            delete(app.RFFigure)
+            app.RFFigure = [];
+            app.axesRF = [];
+            app.lineRF = [];
+            
+            app.DataFIFOBufferRF = [];
             
             
         end
@@ -833,6 +921,11 @@ properties (Access = private)
                     % Dejar disponible boton de activar panel
                     app.ActPanelButton.Enable = 'on';
                     
+                    % Temporal hasta arreglar interaccion con MW
+                    app.StartTraceButton.Enable = 'on';
+                    
+                    
+                    
                 case 'scannerStopped'
                     app.SavingDataSwitch.Enable = 'on';
                     app.NotifyScansSpinner.Enable = 'on';
@@ -996,6 +1089,60 @@ properties (Access = private)
             % Guardar archivo de respaldo (sin hora)
             save(backupFullPath, 'scan');
             disp(['Respaldo guardado en: ', backupFullPath]);
+            
+        end
+        
+        
+        function saveSweepBackup(app)
+            
+            
+            % Metadata correspondiente a la muestra
+            metadataMuestraStruct.muestra = app.SampleNameEditField.Value;
+            
+            % Obtener la fecha y hora actual
+            timestamp = datetime('now', 'Format', 'yyyy-MM-dd');
+            timestampStr = datestr(timestamp, 'yyyy-mm-dd');  % Fecha solo con día, mes y año
+            
+            
+            % Obtener la carpeta actual
+            currentFolder = pwd;
+            
+            % Definir los datos a guardar
+            
+            dataStruct.PL = app.ctasSweep;
+            dataStruct.accumCts = app.movingAverageBuffer;
+            dataStruct.frequencies = app.freqSwep;
+            
+            % Metadata correspondiente al sweep
+            
+            metadataSweepStruct.freqStartGHz = app.FreqStartGHzEditField.Value;
+            metadataSweepStruct.freqStopGHz = app.FreqStopGHzEditField.Value;
+            metadataSweepStruct.powdBm = app.PowerdBmEditField.Value;
+            
+            metadataSweepStruct.dwellTime = (app.DTimemsEditField.Value)/1000;
+            metadataSweepStruct.nPoints = app.PointsEditField.Value;
+            metadataSweepStruct.nReps = app.RepetitionsEditField.Value;
+            metadataSweepStruct.totalCycles = app.CyclesEditField.Value;
+            
+            metadataSweepStruct.posX = app.XEditField.Value;
+            metadataSweepStruct.posY = app.YEditField.Value;
+            metadataSweepStruct.posZ = app.ZEditField.Value;
+            
+            
+            
+            % Guardar datos y metadata en una estructura
+            sweep.data = dataStruct;
+            sweep.metadataMuestra = metadataMuestraStruct;
+            sweep.metadataSweep = metadataSweepStruct;
+            
+            % Definir nombre de archivo de respaldo (con solo día, mes y año)
+            backupFilename = ['respaldoSweep_', timestampStr, '.mat'];
+            backupFullPath = fullfile(currentFolder, backupFilename);
+            
+            
+            % Guardar archivo de respaldo (sin hora)
+            save(backupFullPath, 'sweep');
+            disp(['Respaldo del sweep guardado en: ', backupFullPath]);
             
         end
 
@@ -1194,6 +1341,11 @@ properties (Access = private)
         
             switch event.SelectedOption
                 case 'OK'
+                    
+                    if ~(isempty(app.anapicoSession))
+                        DISCONNECTMWButtonPushed(app, event)
+                    end
+                    
                     if isAcquiring
                         closeTraceCallback(app, [], [])
                         
@@ -1313,24 +1465,29 @@ properties (Access = private)
             
             
             
-            % Obtener la posición del click down
-            pos = get(app.UIAxes, 'CurrentPoint');
-            x = round(pos(1,1),4);
-            y = round(pos(1,2),4);
-            app.isClickedDown = true;
-            actualizarVoltajes(app)
-            
-            
-            % Verificar que el click se haya hecho dentro de los límites de la figura
-            
-            if x >= min(app.xCoordCts) && x <= max(app.xCoordCts) && y >= min(app.yCoordCts) && y <= max(app.yCoordCts)
-                
-                
-                % Actualizar las líneas de coordenadas
-                
-                set(app.hXLine, 'Value', x);
-                set(app.hYLine, 'Value', y);
-                
+           % Obtener la posición del click down
+           pos = get(app.UIAxes, 'CurrentPoint');
+           x = round(pos(1,1),4);
+           y = round(pos(1,2),4);
+           app.isClickedDown = true;
+           actualizarVoltajes(app)
+           
+           
+           % Verificar que el click se haya hecho dentro de los límites de la figura
+           
+           if x >= min(app.xCoordCts) && x <= max(app.xCoordCts) && y >= min(app.yCoordCts) && y <= max(app.yCoordCts)
+               
+               
+               % Verificar si las líneas son válidas antes de modificarlas
+               if ishandle(app.hXLine) && ishandle(app.hYLine)
+                   % Actualizar las líneas de coordenadas
+                   set(app.hXLine, 'Value', x);
+                   set(app.hYLine, 'Value', y);
+               else
+                   beep;
+                   disp('Las líneas hXLine o hYLine no son válidas para desplazarse por UIAxes.');
+               end
+               
                 % Actualizar la posición clickeada como voltaje final
                 
                 app.voltFinalX = x/8;
@@ -1409,10 +1566,15 @@ properties (Access = private)
             
             if x >= min(app.xCoordCts) && x <= max(app.xCoordCts) && y >= min(app.yCoordCts) && y <= max(app.yCoordCts)
                 
-                % Actualizar las líneas de coordenadas en la figura
-                
-                set(app.hXLine, 'Value', x);
-                set(app.hYLine, 'Value', y);
+                % Verificar si las líneas son válidas antes de modificarlas
+               if ishandle(app.hXLine) && ishandle(app.hYLine)
+                   % Actualizar las líneas de coordenadas
+                   set(app.hXLine, 'Value', x);
+                   set(app.hYLine, 'Value', y);
+               else
+                   beep;
+                   disp('Las líneas hXLine o hYLine no son válidas para desplazarse por UIAxes.');
+               end
                 
                 % Mostrar en UI posición del mouse al levantr click
 %                 actualizarVoltajes(app)
@@ -1724,10 +1886,36 @@ properties (Access = private)
         
         function iniciarSesionTraza(app)
             
+            if ~(isempty(app.DAQScanSweepSession))
+                stop(app.DAQScanSweepSession)
+                release(app.DAQScanSweepSession)
+                delete(app.DAQScanSweepSession)
+                
+                % Eliminar listener
+                delete(app.sweepCountsListener);
+                app.sweepCountsListener = [];
+                
+                app.DAQScanSweepSession = [];
+                
+                % Si está abierta la sesion del sweep habrá una traza en
+                % ctr3
+                
+                stop(app.DAQScanTrace)
+                release(app.DAQScanTrace)
+                delete(app.DAQScanTrace)
+                
+                % Eliminar listener
+                delete(app.scanTraceListener);
+                app.scanTraceListener = [];
+                
+                app.DAQScanTrace = [];
+                
+            end
+            
             if ~(isempty(app.DAQScanSession))
                 
                 % Si hay una sesion asociada al scan estará usando los
-                % canales de la traza. 
+                % canales de la traza.
                 
                 stop(app.DAQScanSession)
                 release(app.DAQScanSession)
@@ -1738,65 +1926,130 @@ properties (Access = private)
                 app.TraceAvailableListener = [];
                 
                 app.DAQScanSession = [];
-                
-                iniciarSesionTraza(app)
-                
-            else
-                %Crear sesion principal para adquisición de cuentas
-                s_in = daq.createSession('ni');
-                
-                % Agregar un canal de entrada para contador APD
-                addCounterInputChannel(s_in, 'Dev1', 'ctr0', 'EdgeCount');
-                
-                % Configurar reloj para medir traza
-                iniciarSesionReloj(app, 'traza')
-                
-                % Agregar reloj a sesion de traza
-                s_in.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
-                
-                % Configurar la tasa de muestreo igual a frec. del reloj
-                s_in.Rate = app.DAQClkTraceSession.Channels.Frequency;
-                
-                % Recibir datos de manera continua
-                s_in.IsContinuous = true;
-                
-                % Configurar cantidad de datos para llamar al listener
-                s_in.NotifyWhenDataAvailableExceeds = app.NotifyScansSpinner.Value;
-                
-                % Guardar sesion como variable de la clase
-                app.DAQSessionTrace = s_in;
-                
-                % Inicializar listener como arreglo vacío.
-                app.TraceAvailableListener = [];
-                
-                %========================================================
-                %Crear sesion principal para adquisición de cuentas
-                s_in2 = daq.createSession('ni');
-                
-                % Detector infrarojo
-                addCounterInputChannel(s_in2, 'Dev1', 'ctr3', 'EdgeCount');
-                
-                % Agregar reloj a sesion de traza
-                s_in2.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
-                
-                % Configurar la tasa de muestreo igual a frec. del reloj
-                s_in2.Rate = app.DAQClkTraceSession.Channels.Frequency;
-                
-                % Recibir datos de manera continua
-                s_in2.IsContinuous = true;
-                
-                % Configurar cantidad de datos para llamar al listener
-                s_in2.NotifyWhenDataAvailableExceeds = app.NotifyScansSpinner.Value;
-                
-                % Guardar sesion como variable de la clase
-                app.DAQSessionTrace2 = s_in2;
-                
-                % Inicializar listener como arreglo vacío.
-                app.TraceAvailableListener2 = [];
             end
+            
+            
+            %Crear sesion principal para adquisición de cuentas
+            s_in = daq.createSession('ni');
+            
+            % Agregar un canal de entrada para contador APD
+            addCounterInputChannel(s_in, 'Dev1', 'ctr0', 'EdgeCount');
+            
+            % Configurar reloj para medir traza
+            iniciarSesionReloj(app, 'traza')
+            
+            % Agregar reloj a sesion de traza
+            s_in.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
+            
+            % Configurar la tasa de muestreo igual a frec. del reloj
+            s_in.Rate = app.DAQClkTraceSession.Channels.Frequency;
+            
+            % Recibir datos de manera continua
+            s_in.IsContinuous = true;
+            
+            % Configurar cantidad de datos para llamar al listener
+            s_in.NotifyWhenDataAvailableExceeds = app.NotifyScansSpinner.Value;
+            
+            % Guardar sesion como variable de la clase
+            app.DAQSessionTrace = s_in;
+            
+            % Inicializar listener como arreglo vacío.
+            app.TraceAvailableListener = [];
+            
+            %========================================================
+            %Crear sesion principal para adquisición de cuentas
+            s_in2 = daq.createSession('ni');
+            
+            % Detector infrarojo
+            addCounterInputChannel(s_in2, 'Dev1', 'ctr3', 'EdgeCount');
+            
+            % Agregar reloj a sesion de traza
+            s_in2.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
+            
+            % Configurar la tasa de muestreo igual a frec. del reloj
+            s_in2.Rate = app.DAQClkTraceSession.Channels.Frequency;
+            
+            % Recibir datos de manera continua
+            s_in2.IsContinuous = true;
+            
+            % Configurar cantidad de datos para llamar al listener
+            s_in2.NotifyWhenDataAvailableExceeds = app.NotifyScansSpinner.Value;
+            
+            % Guardar sesion como variable de la clase
+            app.DAQSessionTrace2 = s_in2;
+            
+            % Inicializar listener como arreglo vacío.
+            app.TraceAvailableListener2 = [];
+            
             
         end
         
+        
+        function figureTrazaScan(app, task, name)
+            
+            % Setear buffers como arreglos vacíos previo a usarlos
+            app.DataFIFOBufferScanTrace = [];
+            
+            switch task
+                case 'scan'
+                    
+                    % Crear figura externa a la app para mostrar traza
+                    app.scanTraceFigure = figure('Name',name, 'Position', [910, 50, 1000, 800], ...
+                        'CloseRequestFcn', @(src, event) closeScanTraceCallback(app, src, event));
+                    
+                    
+                    % Obtener el handle a los ejes de la figura
+                    app.axesScanTrace = axes(app.scanTraceFigure);
+                    %Hacer plot sin datos
+                    app.lineScanTrace = plot(app.axesScanTrace, NaN, 'LineWidth',3,"Color",'k');
+                    
+                    % Conf. título y etiquetas
+                    title(app.axesScanTrace, name);
+                    xlabel(app.axesScanTrace, 'u.a');
+                    ylabel(app.axesScanTrace, 'cuentas/s');
+                    
+                    xlim(app.axesScanTrace,[0, app.NBufferEditField.Value]);
+                    set(app.axesScanTrace, 'FontSize', 32);
+                    
+                case 'sweep'
+                    % Crear figura externa a la app para mostrar traza
+                    app.scanTraceFigure = figure('Name',name, 'Position', [910, 50, 1000, 800], ...
+                        'CloseRequestFcn', @(src, event) closeScanTraceCallback(app, src, event));
+                    
+                    
+                    % Obtener el handle a los ejes de la figura
+                    app.axesScanTrace = subplot(2, 1, 1, 'Parent', app.scanTraceFigure);
+                    %Hacer plot sin datos
+                    app.lineScanTrace = plot(app.axesScanTrace, NaN, 'LineWidth',3,"Color",'k');
+                    
+                    % Conf. título y etiquetas
+                    title(app.axesScanTrace, name);
+                    xlabel(app.axesScanTrace, 'u.a');
+                    ylabel(app.axesScanTrace, 'Cts/s');
+                    
+                    xlim(app.axesScanTrace,[0, app.NBufferEditField.Value]);
+                    set(app.axesScanTrace, 'FontSize', 32);
+                    
+                    % Crear el segundo subplot para el gráfico de media
+                    % movil
+                    app.axesMeanTrace = subplot(2, 1, 2, 'Parent', app.scanTraceFigure);
+                    app.lineMeanTrace = plot(app.axesMeanTrace, NaN, 'LineWidth', 3, "Color", 'b');
+                    ylabel(app.axesMeanTrace, 'Cts/Línea', 'Color', 'k');
+                    xlabel(app.axesMeanTrace, 'Freq. (GHz)');
+                    xlim(app.axesMeanTrace, [min(app.freqSwep), max(app.freqSwep)]);
+                    set(app.axesMeanTrace, 'FontSize', 32);
+            end
+            
+            
+            % Iniciar sesion de traza
+            iniciarTrazaScan(app, task)
+            
+            % Crear listener e iniciar en 2do plano sesion de adquisición
+            app.scanTraceListener = addlistener(app.DAQScanTrace, 'DataAvailable', ...
+                @(src,event) scanTraceCallback(app, src, event));
+            
+            startBackground(app.DAQScanTrace);
+        end
         
         
         function iniciarSesionScan(app)
@@ -1887,7 +2140,569 @@ properties (Access = private)
             
         end
         
-        function iniciarTrazaScan(app)
+        function iniciarSesionScanSweep(app)
+            
+            if ~(isempty(app.DAQSessionTrace))
+                
+                StopTraceButtonValueChanged(app,[])
+                % Detener sesion de traza para usar sus canales
+                stop(app.DAQSessionTrace)
+                release(app.DAQSessionTrace)
+                delete(app.DAQSessionTrace)
+                
+                app.DAQSessionTrace = [];
+                
+                %=========================
+                % detener y eliminar apd2
+                stop(app.DAQSessionTrace2)
+                release(app.DAQSessionTrace2)
+                delete(app.DAQSessionTrace2)
+                
+                app.DAQSessionTrace2 = [];
+            end
+            
+            % Verificar si se estan usando los canales del piezo
+            
+            if ~(isempty(app.DAQSesionCoordX))
+                % Detener sesion de coordenada X
+                stop(app.DAQSesionCoordX)
+                release(app.DAQSesionCoordX)
+                delete(app.DAQSesionCoordX)
+                
+                app.DAQSesionCoordX = [];
+            end
+            
+            if ~(isempty(app.DAQSesionCoordY))
+                % Detener sesion de coordenada Y
+                stop(app.DAQSesionCoordY)
+                release(app.DAQSesionCoordY)
+                delete(app.DAQSesionCoordY)
+                
+                app.DAQSesionCoordY = [];
+            end
+            
+            % Detener sesión de scaneo
+            if ~(isempty(app.DAQScanSession))
+                stop(app.DAQScanSession)
+                release(app.DAQScanSession)
+                delete(app.DAQScanSession)
+                
+                app.DAQScanSession = [];
+            end
+            
+            if ~(isempty(app.DAQScanTrace))
+                
+                % Si hay una sesion asociada a la traza del scan estará usando los
+                % canales.
+                
+                stop(app.DAQScanTrace)
+                release(app.DAQScanTrace)
+                delete(app.DAQScanTrace)
+                
+                % Eliminar listener
+                delete(app.scanTraceListener);
+                app.scanTraceListener = [];
+                
+                app.DAQScanTrace = [];
+            end
+            
+            
+            % Actualizar frecuencia del reloj
+            iniciarSesionReloj(app,'scan')
+            
+            %Crear sesion principal para el scan
+            s_scanSweep = daq.createSession('ni');
+            
+            % Agregar un canal de entrada para contador Excelitas
+            addCounterInputChannel(s_scanSweep, 'Dev1', 'ctr0', 'EdgeCount');
+            
+            % Agregar un canal de entrada para contar pulsos de cada
+            % frequencia
+            addCounterInputChannel(s_scanSweep, 'Dev1', 'ctr2', 'EdgeCount');
+            
+            % Configurar reloj
+            s_scanSweep.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
+            
+            % Create trigger
+            addTriggerConnection(s_scanSweep,'External','Dev1/PFI9','StartTrigger');
+            
+            % Session waits a maximum of 2 min. for the trigger
+            s_scanSweep.ExternalTriggerTimeout = 120;
+            
+            % Configurar la tasa de muestreo igual a frec. del reloj
+            s_scanSweep.Rate = app.ScanFreqEditField.Value;
+            
+            % Recibir datos de manera continua
+            s_scanSweep.IsContinuous = true;
+            
+            % Sweep parameters that define data notification
+            nPoints = app.PointsEditField.Value;
+            nRep = app.RepetitionsEditField.Value;
+            dTime = (app.DTimemsEditField.Value)/1000;
+            cycles = app.CyclesEditField.Value;
+            
+            % Adding a point to avoid errors associated to delay time
+            s_scanSweep.NotifyWhenDataAvailableExceeds = ((nPoints+1)*dTime*cycles)*5E4;
+            
+            % Guardar sesion como variable de la clase
+            app.DAQScanSweepSession = s_scanSweep;
+            
+            % Listener to process collected data
+            app.sweepCountsListener = addlistener(app.DAQScanSweepSession, 'DataAvailable', @(src, event) sweepCountsProcessing(app, event));
+            
+            % Create matrix that will store the effective counts
+            
+            % Here we use the 'effective' number of points registered by
+            % user
+            app.ctasSweep = zeros(nRep,nPoints);
+            
+            app.movingAverageBuffer = zeros(1,nPoints);
+            
+            imagesc(app.UIAxes, app.freqSwep, (1:1:nRep),app.ctasSweep)
+            xlim(app.UIAxes, [min(app.freqSwep), max(app.freqSwep)]);
+            ylim(app.UIAxes, [1, nRep]);
+            colormap(app.UIAxes,"jet")
+            colorbar(app.UIAxes)
+            
+            disp("Listener added")
+            
+            
+            
+            disp("Sesión de adquisición de cuentas creada.")
+                
+                % Configuración de salidas de voltaje
+                
+%                 % El orden de las coordenadas va como X, Y, Z.
+%                 % Crear salidas analógicas para mover piezo
+%                 addAnalogOutputChannel(s_scanSweep, 'Dev1', 'ao0', 'Voltage');
+%                 addAnalogOutputChannel(s_scanSweep, 'Dev1', 'ao1', 'Voltage');
+%                 
+%                 % Agregar entradas analógicas para leer posicion piezo
+%                 addAnalogInputChannel(s_scanSweep, 'Dev1', 'ai0', 'Voltage');
+%                 addAnalogInputChannel(s_scanSweep, 'Dev1', 'ai4', 'Voltage');
+                
+                % Guardar sesion como variable de la clase
+                %app.DAQScanSweepSession = s_scanSweep;
+                
+                % ==============================================================
+                
+            
+        end
+        
+        function sweepCountsProcessing(app, event)
+            
+            % Increse the line counter
+            app.lineNumber = app.lineNumber + 1;
+            
+            % Sweep variables
+            dwellTime = (app.DTimemsEditField.Value)/1000;
+            %effTimeLastFreq = (app.DTimemsEditField.Value - 2)/1000;
+            nPoints = (app.PointsEditField.Value) * app.CyclesEditField.Value + 1;
+            nReps = app.RepetitionsEditField.Value;
+            totalCycles = app.CyclesEditField.Value;
+            
+            rawDataCycle = event.Data;
+            
+            % Data processing
+            rawCts = diff(rawDataCycle(:,1));
+            rawPulses = diff(rawDataCycle(:,2));
+            
+            % Verify that we are in the range of repetitions
+            
+            if app.lineNumber <= nReps
+                
+                
+                % Last idx considered with counts
+                finalIdx = length(rawDataCycle)-1;
+                % Get the indices at which the pulses are received to change frequencies
+                idxPulses = [find(rawPulses); finalIdx];
+                
+                % Create the sequence that follows the counts interval
+                sequence = repelem((2:nPoints),2);
+                sequence = [1, sequence, nPoints+1];
+                
+                % Create the counts interval
+                intervals = idxPulses(sequence);
+                intervals = reshape(intervals,2,[])';
+                
+                % Assign counts into the matrix
+                % discard the last point
+                effNPoints = nPoints-1;
+                ctasEff = zeros(effNPoints,1);
+                
+                
+                for i = 1:effNPoints
+                    ctasEff(i) = sum(rawCts(intervals(i,1):intervals(i,2)));
+                end
+                
+                ctasEff = ctasEff/dwellTime;
+                %ctasEff(1:nPoints-1) = ctasEff(1:nPoints-1)/dwellTime;
+                %ctasEff(nPoints) = ctasEff(nPoints)/effTimeLastFreq;
+                
+                switch totalCycles
+                    case 1
+                        app.ctasSweep(app.lineNumber,:) = ctasEff;
+                        
+                    otherwise
+                        %app.movingAverageBuffer = (app.movingAverageBuffer + ctasEff)/(app.lineNumber*app.CyclesEditField.Value);
+                        ctasEff = reshape(ctasEff, app.PointsEditField.Value, totalCycles)';
+                        app.ctasSweep(app.lineNumber,:) = mean(ctasEff);
+                end
+                
+                
+                % Get the moving average
+                app.movingAverageBuffer = (app.movingAverageBuffer + app.ctasSweep(app.lineNumber,:));
+                
+                % Update plot data
+                %set(app.lineMeanTrace ,'YData', app.movingAverageBuffer);
+                set(app.lineMeanTrace, 'XData', app.freqSwep, 'YData', app.movingAverageBuffer)
+                drawnow limitrate;
+                
+                % Update the PL map by only changing the matrix of counts
+                set(app.UIAxes.Children, 'CData', app.ctasSweep);
+                
+                
+                % Update min and max of the colorbar
+                if min(app.ctasSweep(1:app.lineNumber,:)) ~= max(app.ctasSweep(1:app.lineNumber,:))
+                    caxis(app.UIAxes, [min(app.ctasSweep(1:app.lineNumber,:), [], 'all'), max(app.ctasSweep(1:app.lineNumber,:), [], 'all')]);
+                end
+                
+                
+                % update colorbar
+                colorbar(app.UIAxes);
+                
+                
+            else
+                
+                % Delete listener once we have reached the total number of repetitions
+                delete(app.sweepCountsListener)
+                app.lineNumber = 0;
+                disp("Sweep Terminado.")
+                
+                saveSweepBackup(app)
+                
+                app.StartTraceButton.Enable = 'on';
+                
+                
+                
+                % Enable the fields to configure sweep
+                app.FreqStartGHzEditField.Enable = 'On';
+                app.FreqStopGHzEditField.Enable = 'On';
+                app.PowerdBmEditField.Enable = 'On';
+                
+                app.FreqGHzEditField.Enable = 'On';
+                app.PowerdBmEditField_2.Enable = 'On';
+                
+                app.DTimemsEditField.Enable = 'On';
+                app.PointsEditField.Enable = 'On';
+                app.RepetitionsEditField.Enable = 'On';
+                app.CyclesEditField.Enable = 'On';
+                
+                app.SWEEPButton.Enable = 'On';
+                app.STOPSWEEPButton.Enable = 'Off';
+                
+                app.LOADSWEEPButton.Enable = 'On';
+                app.SAVESWEEPButton.Enable = 'On';
+                
+            end
+        end
+        
+        function initTriggerSession(app)
+            
+            if isempty(app.daqTriggerSesion)
+                % Create session to trrigger the sweep
+                sTrg = daq.createSession('ni');
+                
+                % add channel to release the trigger
+                addDigitalChannel(sTrg, 'Dev1', 'port0/line0', 'OutputOnly'); % USER1
+                addDigitalChannel(sTrg, 'Dev1', 'port0/line1', 'OutputOnly'); % PFI9
+                
+                % synchronise with the clock session
+                sTrg.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
+                
+                
+                % create the pulse that triggers the counters
+                triggerCounters = [zeros(4,1); ones(2,1); zeros(100,1)];
+                % pulse that triggers the MW gen. with a delay of 2 ms               
+                triggerMwGen = [zeros(102,1); ones(2,1); zeros(2,1)];
+                app.triggerOutput = [triggerMwGen, triggerCounters];
+                
+                % save trigger session as a global variable
+                app.daqTriggerSesion = sTrg;
+                
+            end
+        end
+        
+        function triggerSweep(app)
+            if ~isempty(app.daqTriggerSesion)
+                disp(3)
+                
+                % add the trigger output to the queue
+                queueOutputData(app.daqTriggerSesion, app.triggerOutput);
+                
+                % trigger
+                startForeground(app.daqTriggerSesion)
+            else
+                initTriggerSession(app)
+                triggerSweep(app)
+            end
+        end
+        
+        function prepareMWGen(app)
+            
+            % get the session
+            d = app.anapicoSession;
+            
+            % Unable the fields to configure sweep
+            app.FreqStartGHzEditField.Enable = 'Off';
+            app.FreqStopGHzEditField.Enable = 'Off';
+            app.PowerdBmEditField.Enable = 'Off';
+            
+            app.FreqGHzEditField.Enable = 'Off';
+            app.PowerdBmEditField_2.Enable = 'Off';
+            
+            app.DTimemsEditField.Enable = 'Off';
+            app.PointsEditField.Enable = 'Off';
+            app.RepetitionsEditField.Enable = 'Off';
+            app.CyclesEditField.Enable = 'Off';
+            
+            app.SWEEPButton.Enable = 'Off';
+            app.STOPSWEEPButton.Enable = 'On';
+            
+            app.LOADSWEEPButton.Enable = 'Off';
+            app.SAVESWEEPButton.Enable = 'Off';
+            
+            
+            % Turn on the CW with freq. start as its frequency
+            freqCW = num2str(app.FreqStartGHzEditField.Value);
+            powerCW = num2str(app.PowerdBmEditField.Value);
+            
+            fprintf(d, 'FREQ %s Ghz\n', freqCW);
+            pause(0.1)
+            fprintf(d, 'POW %s dBm\n', powerCW);
+            pause(0.1)
+            
+            % Display the current configuration of CW
+            disp("The CW frequency is ")
+            query(d, 'FREQ?')
+            disp("\nThe CW power is ")
+            query(d, 'POW?')
+            
+            % Activate the rf
+            fprintf(d, 'OUTP ON\n');
+            
+            
+            % Sweep Conf.
+            frqStart = app.FreqStartGHzEditField.Value;
+            freqStop = app.FreqStopGHzEditField.Value;
+            dwellTime = (app.DTimemsEditField.Value)/1000;
+            nPoints = app.PointsEditField.Value;
+            nReps = app.RepetitionsEditField.Value;
+            nCycle = app.CyclesEditField.Value;
+            
+            % Original list of frequencies provided by the user
+            app.freqSwep = linspace(frqStart, freqStop, nPoints);
+            
+            
+            % Adding a point to the sweep to discard and avoid errors associated with delay time
+            deltaFreq = (frqStart - freqStop)/(nPoints - 1);
+            
+            % Change the stop frequency and number of points
+            freqStop = freqStop + deltaFreq;
+            nPoints = nPoints + 1;
+          
+            
+            
+            % Freq. start
+            fprintf(d, 'FREQ:STAR %s GHz\n', num2str(frqStart));
+            pause(0.1)
+            % Freq. stop
+            fprintf(d, 'FREQ:STOP %s GHz\n', num2str(freqStop));
+            pause(0.1)
+            % Dwell time
+            fprintf(d, 'SWE:DWEL %s s\n', num2str(dwellTime));
+            pause(0.1)
+            % Points
+            fprintf(d, 'SWE:POIN %s \n', num2str(nPoints));
+            pause(0.1)
+            % Repetitions
+            fprintf(d, 'SWE:COUN %s \n', num2str(nReps*nCycle));
+            pause(0.1)
+            % disable RF output blanking while waiting for the trigger signal
+            fprintf(d, 'SWE:BLAN OFF \n');
+            pause(0.1)
+            
+            
+            % Trigger input configuration
+            % Source
+            fprintf(d,'TRIG:SOUR EXT \n');
+            pause(0.1)
+            % Trigger type
+            fprintf(d,'TRIG:TYPE NORM \n');
+            pause(0.1)
+            
+            % Trigger output configuration
+            fprintf(d,'LFO:SOUR TRIG \n');
+            pause(0.1)
+            fprintf(d,'TRIG:OUTP:MODE POIN \n');
+            pause(0.1)
+            
+            % Handle the RF
+            if ~app.rfState
+                app.RFSwitch.Value = 'On';
+                RFSwitchValueChanged(app)
+            end
+            
+            % set sweep
+            fprintf(d, 'FREQ:MODE SWE\n');
+            pause(0.1)
+            % activate trigger output
+            fprintf(d, 'LFO:STAT ON \n');
+        end
+        
+        
+        
+        function iniciarSesionRF(app)
+            if ~(isempty(app.DAQSessionTrace))
+                % Detener sesion de traza para usar sus canales
+                stop(app.DAQSessionTrace)
+                release(app.DAQSessionTrace)
+                delete(app.DAQSessionTrace)
+                
+                app.DAQSessionTrace = [];
+                
+                %=========================
+                % detener y eliminar apd2
+                stop(app.DAQSessionTrace2)
+                release(app.DAQSessionTrace2)
+                delete(app.DAQSessionTrace2)
+                
+                app.DAQSessionTrace2 = [];
+            end
+            
+            % Verificar si se estan usando los canales del piezo
+            
+            if ~(isempty(app.DAQSesionCoordX))
+                % Detener sesion de coordenada X
+                stop(app.DAQSesionCoordX)
+                release(app.DAQSesionCoordX)
+                delete(app.DAQSesionCoordX)
+                
+                app.DAQSesionCoordX = [];
+            end
+            
+            if ~(isempty(app.DAQSesionCoordY))
+                % Detener sesion de coordenada Y
+                stop(app.DAQSesionCoordY)
+                release(app.DAQSesionCoordY)
+                delete(app.DAQSesionCoordY)
+                
+                app.DAQSesionCoordY = [];
+            end
+            
+            if ~(isempty(app.DAQScanSession))
+                % Detener sesion de coordenada Y
+                stop(app.DAQScanSession)
+                release(app.DAQScanSession)
+                delete(app.DAQScanSession)
+                
+                app.DAQScanSession = [];
+            end
+            
+            if ~(isempty(app.DAQScanSweepSession))
+                % Detener sesion de coordenada Y
+                stop(app.DAQScanSweepSession)
+                release(app.DAQScanSweepSession)
+                delete(app.DAQScanSweepSession)
+                
+                app.DAQScanSweepSession = [];
+            end
+            
+            if ~(isempty(app.DAQScanTrace))
+                % Detener sesion de coordenada Y
+                stop(app.DAQScanTrace)
+                release(app.DAQScanTrace)
+                delete(app.DAQScanTrace)
+                
+                app.DAQScanTrace = [];
+            end
+            
+            % Si la sesión del scan está activa solo necesitamos actualizar
+            % frecuencia
+            if ~(isempty(app.DAQRFSession))
+                % AGREGAR LISTENER PARA VOLVER A HACER FIGURA Y CONTAR
+                % CUENTAS
+                % Listener to process collected data
+                app.RFCountsListener = addlistener(app.DAQScanSweepSession, 'DataAvailable', @(src, event) RFCountsProcessing(app, event));
+            else
+                % Actualizar frecuencia del reloj
+                iniciarSesionReloj(app,'scan')
+                
+                %Crear sesion principal para el scan
+                s_RF = daq.createSession('ni');
+                
+                % Agregar un canal de entrada para contador Excelitas
+                addCounterInputChannel(s_RF, 'Dev1', 'ctr0', 'EdgeCount');
+                
+                % Agregar un canal de entrada para contador Lasercomp
+                addCounterInputChannel(s_RF, 'Dev1', 'ctr3', 'EdgeCount');
+                
+                % Configurar reloj
+                s_RF.addClockConnection('External', 'Dev1/PFI13', 'ScanClock');
+                
+                % Configurar la tasa de muestreo igual a frec. del reloj
+                s_RF.Rate = app.ScanFreqEditField.Value;
+                
+                % Recibir datos de manera continua
+                s_RF.IsContinuous = true;
+                
+                s_RF.NotifyWhenDataAvailableExceeds = 5E3;
+                
+                % Guardar sesion como variable de la clase
+                app.DAQRFSession = s_RF;
+                
+                % Listener to process collected data
+                app.RFCountsListener = addlistener(app.DAQRFSession, 'DataAvailable', @(src, event) RFCountsProcessing(app, event));
+                
+                % ==============================================================
+                
+                % Crear figura externa a la app para mostrar traza
+                app.RFFigure = figure('Name','CW', 'Position', [910, 50, 1000, 800], ...
+                    'CloseRequestFcn', @(src, event) closeFigRFCallback(app, src, event));
+                
+                
+                % Obtener el handle a los ejes de la figura
+                app.axesRF = axes(app.RFFigure);
+                %Hacer plot sin datos
+                app.lineRF = plot(app.axesRF, NaN, 'LineWidth',3,"Color",'k');
+                
+                % Conf. título y etiquetas
+                title(app.axesRF, 'CW');
+                xlabel(app.axesRF, 'u.a');
+                ylabel(app.axesRF, 'Cts');
+                
+                xlim(app.axesRF,[0, 1E4]);
+                set(app.axesRF, 'FontSize', 32);
+                
+            end
+        end
+        
+        function RFCountsProcessing(app, event)
+            
+            dataAPD = diff(event.Data(:,1));
+            dataLas = diff(event.Data(:,2));
+            
+            data = dataAPD + dataLas;
+            
+            app.DataFIFOBufferRF = storeDataInFIFO(app, app.DataFIFOBufferRF, 1E4, data);
+            
+            set(app.lineRF ,'YData', app.DataFIFOBufferRF);
+            drawnow limitrate;
+        end
+        
+        
+        
+        function iniciarTrazaScan(app, task)
             if ~(isempty(app.DAQScanTrace))
                 
                 % Si hay una sesion asociada al scan estará usando los
@@ -1903,23 +2718,28 @@ properties (Access = private)
                 
                 app.DAQScanTrace = [];
                 
-                iniciarTrazaScan(app)
+                iniciarTrazaScan(app, task)
                 
             else
                 %Crear sesion principal para adquisición de cuentas
                 s_in = daq.createSession('ni');
                 
                 % Agregar un canal de entrada para contador
-                addCounterInputChannel(s_in, 'Dev1', 'ctr2', 'EdgeCount');
+                switch task
+                    case 'scan'
+                        addCounterInputChannel(s_in, 'Dev1', 'ctr2', 'EdgeCount');
+                    case 'sweep'
+                        addCounterInputChannel(s_in, 'Dev1', 'ctr3', 'EdgeCount');
+                end
                 
-                % Configurar reloj para medir traza
-                iniciarSesionReloj(app, 'traza')
+                
+                % TRAZA DEL SCAN USA RELOJ EXTERNO
                 
                 % Agregar reloj a sesion de traza
                 s_in.addClockConnection('External', 'Dev1/PFI7', 'ScanClock');
                 
                 % Configurar la tasa de muestreo igual a frec. del reloj
-                frecGenerador = 5E2;
+                frecGenerador = 5E2; %500 hz en keysight wave gen.
                 s_in.Rate = frecGenerador;
                 
                 % Recibir datos de manera continua
@@ -2981,8 +3801,12 @@ properties (Access = private)
                 actualizarVoltajes(app)
                 
                 
-                set(app.hXLine, 'Value', 0);
-                set(app.hYLine, 'Value', 0);
+                % Verificar si las líneas son válidas antes de modificarlas
+                if ishandle(app.hXLine) && ishandle(app.hYLine)
+                    % Actualizar las líneas de coordenadas en la figura
+                    set(app.hXLine, 'Value', x);
+                    set(app.hYLine, 'Value', y);
+                end
             else
                 iniciarSesionCoordenada(app,'x')
                 iniciarSesionCoordenada(app,'y')
@@ -3040,39 +3864,33 @@ properties (Access = private)
                 app.lineScanTrace = [];
             end
             
+            if ~(isempty(app.DAQScanSweepSession))
+                stop(app.DAQScanSweepSession)
+                release(app.DAQScanSweepSession)
+                delete(app.DAQScanSweepSession)
+                
+                delete(app.sweepCountsListener)
+                
+                disp("Sesion Borrada")
+                
+                app.sweepCountsListener = [];
+                app.DAQScanSweepSession = [];
+                
+                % Delete the figure with trace and accumulated trace
+                delete(app.scanTraceFigure)
+                app.scanTraceFigure = [];
+                
+                app.axesScanTrace = [];
+                app.axesMeanTrace = [];
+                
+                app.lineScanTrace = [];
+                app.lineMeanTrace = [];
+            end
+            
             %======================================================================
             %================= C R E A R  T R A Z A  S C A N ======================
             
-            % Setear buffers como arreglos vacíos previo a usarlos
-            app.DataFIFOBufferScanTrace = [];
-            
-            
-            % Crear figura externa a la app para mostrar traza
-            app.scanTraceFigure = figure('Name','Traza Scan', 'Position', [100, 100, 800, 600], ...
-                'CloseRequestFcn', @(src, event) closeScanTraceCallback(app, src, event));
-            
-            
-            % Obtener el handle a los ejes de la figura
-            app.axesScanTrace = axes(app.scanTraceFigure);
-            %Hacer plot sin datos
-            app.lineScanTrace = plot(app.axesScanTrace, NaN, 'LineWidth',3,"Color",'k');
-            
-            % Conf. título y etiquetas
-            title(app.axesScanTrace, 'Traza Scan');
-            xlabel(app.axesScanTrace, 'u.a');
-            ylabel(app.axesScanTrace, 'cuentas/s');
-            
-            xlim(app.axesScanTrace,[0, app.NBufferEditField.Value]);
-            set(app.axesScanTrace, 'FontSize', 32);
-            
-            % Iniciar sesion de traza scan
-            iniciarTrazaScan(app)
-            
-            % Crear listener e iniciar en 2do plano sesion de adquisición
-            app.scanTraceListener = addlistener(app.DAQScanTrace, 'DataAvailable', ...
-                @(src,event) scanTraceCallback(app, src, event));
-            
-            startBackground(app.DAQScanTrace);
+            figureTrazaScan(app, 'scan', 'Traza Scan')
             
             %============================================================================
             %==================== P A R A M E T R O S  S C A N ==========================
@@ -4149,63 +4967,6 @@ properties (Access = private)
 
         end
 
-        % Callback function
-        function Traza2TestButtonPushed(app, event)
-            
-            %======================================================================
-            %===================== CONF. GRÁFICO TRAZA ======================
-            
-            % Setear buffers como arreglos vacíos previo a usarlos
-            app.DataFIFOBufferScanTrace = [];
-            
-            
-            % Crear figura externa a la app para mostrar traza
-            app.scanTraceFigure = figure('Name','Traza Scan', 'Position', [100, 100, 800, 600]);
-            
-            % Obtener el handle a los ejes de la figura
-            app.axesScanTrace = axes(app.scanTraceFigure);
-            %Hacer plot sin datos
-            app.lineScanTrace = plot(app.axesScanTrace, NaN, 'LineWidth',3,"Color",'k');
-            
-            % Conf. título y etiquetas
-            title(app.axesScanTrace, 'Traza Scan');
-            xlabel(app.axesScanTrace, 'u.a');
-            ylabel(app.axesScanTrace, 'cuentas/s');
-            
-            xlim(app.axesScanTrace,[0, app.NBufferEditField.Value]);
-            set(app.axesScanTrace, 'FontSize', 32);
-            
-            %======================================================================
-            %======================================================================
-            % Iniciar sesion de traza scan
-            iniciarTrazaScan(app)
-            
-            % Crear listener e iniciar en 2do plano sesion de adquisición
-            app.scanTraceListener = addlistener(app.DAQScanTrace, 'DataAvailable', ...
-                @(src,event) scanTraceCallback(app, src, event));
-            
-            startBackground(app.DAQScanTrace);
-            %======================================================================
-            %======================================================================
-            
-        end
-
-        % Callback function
-        function StopTraza2ButtonValueChanged(app, event)
-            % Detener adquisición de datos
-            stop(app.DAQScanTrace)
-            
-            % Eliminar e inicializar listener a array vacío
-            delete(app.scanTraceListener);
-            app.scanTraceListener = [];
-            
-            % Setear handles de gráfico de traza a array vacios
-            delete(app.scanTraceFigure)
-            app.scanTraceFigure = [];
-            app.axesScanTrace = [];
-            app.lineScanTrace = [];
-        end
-
         % Value changed function: SwitchCounterOptimization
         function SwitchCounterOptimizationValueChanged(app, event)
             value = app.SwitchCounterOptimization.Value;
@@ -4396,6 +5157,423 @@ properties (Access = private)
             
             
         end
+
+        % Value changed function: CONNECTMWButton
+        function CONNECTMWButtonValueChanged(app, event)
+            
+            % Create the session
+            d = visa('ni', 'USB0::0x03EB::0xAFFF::111-333600000-2111::INSTR')
+            % Open the session
+            fopen(d)
+            % Configure the way you interact
+            set(d, 'EOSMode', 'read&write');
+            % Display de IDN
+            query(d, '*IDN?')
+            
+            % Display the current configuration of CW
+            % Update the Freq. and Pow. fields to the current conf.
+            disp("The CW frequency is ")
+            devFreq = str2double(query(d, 'FREQ?')) * 1E-9
+            app.FreqGHzEditField.Value = devFreq;
+            devFreq = num2str(devFreq);
+            fprintf(d, 'FREQ %s Ghz\n', devFreq);
+            
+            disp("The CW power is ")
+            devPow = str2double(query(d, 'POW?'))
+            app.PowerdBmEditField.Value = devPow;
+            app.PowerdBmEditField_2.Value = devPow;
+            devPow = num2str(devPow);
+            fprintf(d, 'POW %s dBm\n', devPow);
+            
+            % Save the visa object on a global variable
+            app.anapicoSession = d;
+            
+            % Create the session for triggers
+            initTriggerSession(app)
+            
+            % activate the lamp and the disconnect button
+            app.CONNECTMWButton.Enable = 'Off';
+            app.DISCONNECTMWButton.Enable = 'on';
+            
+            app.LampMW.Enable = 'on';
+            app.RFSwitch.Enable = 'on';
+            app.SWEEPButton.Enable = 'on';
+            
+        end
+
+        % Button pushed function: DISCONNECTMWButton
+        function DISCONNECTMWButtonPushed(app, event)
+            % Get the session
+            d = app.anapicoSession;
+            
+            if ~(isempty(d))
+                
+                if app.rfState
+                    app.RFSwitch.Value = 'Off';
+                    RFSwitchValueChanged(app)
+                end
+                
+                % Turn the trigero output off
+                fprintf(d, 'LFO:STAT OFF \n');
+                pause(0.1)
+                
+                % Close the session
+                fclose(d);
+                
+                % delete the object associated to the session
+                delete(app.anapicoSession)
+                app.anapicoSession = [];
+                
+                % Turn off the lamp and enable the connect button
+                app.LampMW.Enable = 'off';
+                app.CONNECTMWButton.Enable = 'on';
+                app.DISCONNECTMWButton.Enable = 'off';
+                
+                app.SWEEPButton.Enable = 'off';
+            end
+        end
+
+        % Value changed function: SWEEPButton
+        function SWEEPButtonValueChanged(app, event)
+            
+            
+            % Clean the counts session and listener
+            if ~(isempty(app.DAQScanSweepSession))
+                stop(app.DAQScanSweepSession)
+                release(app.DAQScanSweepSession)
+                delete(app.DAQScanSweepSession)
+                
+                delete(app.sweepCountsListener)
+                
+                disp("Sesion Borrada")
+                
+                app.sweepCountsListener = [];
+                app.DAQScanSweepSession = [];
+                
+                % Delete the figure with trace and accumulated trace
+                delete(app.scanTraceFigure)
+                app.scanTraceFigure = [];
+                
+                app.axesScanTrace = [];
+                app.axesMeanTrace = [];
+                
+                app.lineScanTrace = [];
+                app.lineMeanTrace = [];
+                
+                pause(0.1)
+                
+                % Recall the function
+                SWEEPButtonValueChanged(app, [])
+            else
+                % Create session for scanning and counts
+                prepareMWGen(app)
+                iniciarSesionScanSweep(app)
+                
+                % Create real time trace session
+                figureTrazaScan(app, 'sweep', 'Traza Sweep')
+                
+                pause(0.1)
+                % start count session in background
+                startBackground(app.DAQScanSweepSession);
+                pause(0.1)
+                disp("Esperando Trigger")
+                triggerSweep(app)
+                disp("TRIGGER")
+            end
+            
+            
+            
+        end
+
+        % Value changed function: FreqGHzEditField
+        function FreqGHzEditFieldValueChanged(app, event)
+            % Value registered by user
+            value = num2str(app.FreqGHzEditField.Value);
+            
+            % get the session of the device
+            d = app.anapicoSession;
+            
+            if ~(isempty(d))
+                fprintf(d, 'FREQ %s Ghz\n', value);
+                
+                disp("The CW frequency is ")
+                query(d, 'FREQ?')
+            
+            end
+            
+        end
+
+        % Value changed function: PowerdBmEditField
+        function PowerdBmEditFieldValueChanged(app, event)
+            % Value registered by user
+            value = num2str(app.PowerdBmEditField.Value);
+            
+            % get the session of the device
+            d = app.anapicoSession;
+            
+            if ~(isempty(d))
+                fprintf(d, 'POW %s dBm\n', value);
+                disp("The CW power is ")
+                query(d, 'POW?')
+                
+                % Update the value in CW Tab
+                app.PowerdBmEditField_2.Value = app.PowerdBmEditField.Value;
+            end
+            
+        end
+
+        % Value changed function: PowerdBmEditField_2
+        function PowerdBmEditField_2ValueChanged(app, event)
+            value = num2str(app.PowerdBmEditField_2.Value);
+            
+            % get the session of the device
+            d = app.anapicoSession;
+            
+            if ~(isempty(d))
+                fprintf(d, 'POW %s dBm\n', value);
+                disp("The CW power is ")
+                query(d, 'POW?')
+                % Update the value in ESR Tab
+                app.PowerdBmEditField.Value = app.PowerdBmEditField_2.Value;
+            end
+        end
+
+        % Value changed function: RFSwitch
+        function RFSwitchValueChanged(app, event)
+            % Value registered by user
+            valueSwitch = app.RFSwitch.Value;
+            
+            % get the session of the device
+            d = app.anapicoSession;
+            
+            switch valueSwitch
+                case 'On'
+                    app.rfState = true;
+                    
+                    % Update the values of freq and pow on the device
+                    freqCW = num2str(app.FreqGHzEditField.Value);
+                    powerCW = num2str(app.PowerdBmEditField.Value);
+                    
+                    fprintf(d, 'FREQ %s Ghz\n', freqCW);
+                    pause(0.2)
+                    fprintf(d, 'POW %s dBm\n', powerCW);
+                    pause(0.2)
+                    
+                    % Activate the rf
+                    fprintf(d, 'OUTP ON\n');
+                    
+                    
+                case 'Off'
+                    app.rfState = false;
+                    
+                    if ~(isempty(app.DAQScanSweepSession))
+                        
+                        stop(app.DAQScanSweepSession)
+                        release(app.DAQScanSweepSession)
+                        delete(app.DAQScanSweepSession)
+                        
+                        delete(app.sweepCountsListener)
+                        
+                        disp("Sesion Borrada")
+                        
+                        app.sweepCountsListener = [];
+                        app.DAQScanSweepSession = [];
+                        
+                        % Delete the figure with trace and accumulated trace
+                        delete(app.scanTraceFigure)
+                        app.scanTraceFigure = [];
+                        
+                        app.axesScanTrace = [];
+                        app.axesMeanTrace = [];
+                        
+                        app.lineScanTrace = [];
+                        app.lineMeanTrace = [];
+                    end
+                    
+                    % Deactivate rf
+                    fprintf(d, 'FREQ:MODE FIX\n');
+                    pause(0.2)
+                    fprintf(d, 'OUTP OFF\n');
+                    
+            end
+            
+        end
+
+        % Button pushed function: SAVESWEEPButton
+        function SAVESWEEPButtonPushed(app, event)
+            % Metadata correspondiente a la muestra
+            metadataMuestraStruct.muestra = app.SampleNameEditField.Value;
+            
+            % Obtener la fecha y hora actual
+            timestamp = datetime('now', 'Format', 'yyyy-MM-dd_HHmmss');
+            timestampStr = datestr(timestamp, 'yyyy-mm-dd_HHMMSS');
+            
+            % Generar el nombre del archivo
+            usrName = app.SampleNameEditField.Value;
+            
+            % Obtener la carpeta actual
+            currentFolder = pwd;
+            
+            % Definir los datos a guardar
+            
+            dataStruct.PL = app.ctasSweep;
+            dataStruct.accumCts = app.movingAverageBuffer;
+            dataStruct.frequencies = app.freqSwep;
+            
+            % Metadata correspondiente al sweep
+            
+            metadataSweepStruct.freqStartGHz = app.FreqStartGHzEditField.Value;
+            metadataSweepStruct.freqStopGHz = app.FreqStopGHzEditField.Value;
+            metadataSweepStruct.powdBm = app.PowerdBmEditField.Value;
+            
+            metadataSweepStruct.dwellTime = (app.DTimemsEditField.Value)/1000;
+            metadataSweepStruct.nPoints = app.PointsEditField.Value;
+            metadataSweepStruct.nReps = app.RepetitionsEditField.Value;
+            metadataSweepStruct.totalCycles = app.CyclesEditField.Value;
+            
+            metadataSweepStruct.posX = app.XEditField.Value;
+            metadataSweepStruct.posY = app.YEditField.Value;
+            metadataSweepStruct.posZ = app.ZEditField.Value;
+            
+            
+            
+            % Guardar datos y metadata en una estructura
+            sweep.data = dataStruct;
+            sweep.metadataMuestra = metadataMuestraStruct;
+            sweep.metadataSweep = metadataSweepStruct;
+            
+            filename = [timestampStr, '_', usrName, '_SWEEP.mat'];
+            
+            % Generar la ruta completa del archivo
+            fullPath = fullfile(currentFolder, filename);
+            
+            % Guardar los datos en un archivo .mat
+            save(fullPath, 'sweep');
+            
+            % Mostrar un mensaje de confirmación
+            disp(['Sweep guardado en: ', fullPath]);
+        end
+
+        % Value changed function: LOADSWEEPButton
+        function LOADSWEEPButtonValueChanged(app, event)
+            
+            
+            % Las sesiones de coordenadas deben estar activas para
+            % desplazarse al lugarl del sweep
+            
+            if ~(isempty(app.DAQSesionCoordX))
+                % Definir la carpeta actual
+                currentFolder = pwd;
+                
+                % Definir el filtro de archivos para archivos .mat
+                fileFilter = {'*.mat', 'Archivos MAT (*.mat)'};
+                
+                % Abrir el diálogo de selección de archivos
+                [file, path] = uigetfile(fileFilter, 'Seleccionar un archivo MAT', currentFolder);
+                
+                % Verificar si se seleccionó un archivo
+                if isequal(file, 0)
+                    disp('Se ha cancelado cargar una figura');
+                else
+                    fullPath = fullfile(path, file);
+                    disp(['Has seleccionado: ', fullPath]);
+                    
+                    % Cargar datos escaneados
+                    struct = load(fullPath);
+                    
+                    % Identificar si el archivo tiene la estructura 'scan' o 'zoom'
+                    if isfield(struct, 'sweep')
+                        dataStruct = struct.sweep;
+                    else
+                        disp('El archivo no contiene las estructuras esperadas.');
+                        return;
+                    end
+                    
+                    % Extraer coordenadas y datos de la estructura correspondiente
+                    app.ctasSweep = dataStruct.data.PL;
+                    app.movingAverageBuffer = dataStruct.data.accumCts;
+                    app.freqSwep = dataStruct.data.frequencies;
+                    
+                    % Leer voltajes actuales en piezo para cada coordenada
+                    actualizarVoltajes(app)
+                    
+                    % Moverse a puntos donde se fijó offset para scan/zoom
+                    app.voltFinalX = dataStruct.metadataSweep.posX * 0.125;
+                    app.voltFinalY = dataStruct.metadataSweep.posY * 0.125;
+                    app.voltFinalZ = dataStruct.metadataSweep.posZ * 0.125;
+                    
+                    desplazarCoordenada(app,'x')
+                    desplazarCoordenada(app,'y')
+                    desplazarCoordenada(app,'z')
+                    
+                    % Actualizar voltajes actuales
+                    actualizarVoltajes(app)
+                    
+                    % Actualizar parametros de sweep en GUI
+                    app.FreqStartGHzEditField.Value = dataStruct.metadataSweep.freqStartGHz;
+                    app.FreqStopGHzEditField.Value = dataStruct.metadataSweep.freqStopGHz;
+                    app.PowerdBmEditField.Value = dataStruct.metadataSweep.powdBm;
+                    
+                    app.DTimemsEditField.Value = dataStruct.metadataSweep.dwellTime;
+                    app.PointsEditField.Value = dataStruct.metadataSweep.nPoints;
+                    app.RepetitionsEditField.Value = dataStruct.metadataSweep.nReps;
+                    app.CyclesEditField.Value = dataStruct.metadataSweep.totalCycles;
+                    
+                    % Actualizar nombre de muestra
+                    app.SampleNameEditField.Value = dataStruct.metadataMuestra.muestra;
+                    
+                    
+                    imagesc(app.UIAxes, app.freqSwep, (1:1:app.RepetitionsEditField.Value),app.ctasSweep)
+                    xlim(app.UIAxes, [min(app.freqSwep), max(app.freqSwep)]);
+                    ylim(app.UIAxes, [1, app.RepetitionsEditField.Value]);
+                    colormap(app.UIAxes,"jet")
+                    colorbar(app.UIAxes)
+            
+                    
+                end
+            else
+                iniciarSesionCoordenada(app,'x')
+                iniciarSesionCoordenada(app,'y')
+                iniciarSesionCoordenada(app,'z')
+                LOADSWEEPButtonValueChanged(app, event);
+            end
+            
+        end
+
+        % Button pushed function: STOPSWEEPButton
+        function STOPSWEEPButtonPushed(app, event)
+            if ~(isempty(app.sweepCountsListener))
+                
+                delete(app.sweepCountsListener)
+                app.lineNumber = 0;
+                disp("Sweep abortado.")
+                
+                % Deactivate rf
+                d = app.anapicoSession;
+                fprintf(d, 'FREQ:MODE FIX\n');
+                devFreq = str2double(query(d, 'FREQ?')) * 1E-9;
+                app.FreqGHzEditField.Value = devFreq;
+                
+                % Enable the fields to configure sweep
+                app.FreqStartGHzEditField.Enable = 'On';
+                app.FreqStopGHzEditField.Enable = 'On';
+                app.PowerdBmEditField.Enable = 'On';
+                
+                app.FreqGHzEditField.Enable = 'On';
+                app.PowerdBmEditField_2.Enable = 'On';
+                
+                app.DTimemsEditField.Enable = 'On';
+                app.PointsEditField.Enable = 'On';
+                app.RepetitionsEditField.Enable = 'On';
+                app.CyclesEditField.Enable = 'On';
+                
+                app.SWEEPButton.Enable = 'On';
+                app.STOPSWEEPButton.Enable = 'Off';
+                
+                app.LOADSWEEPButton.Enable = 'On';
+                app.SAVESWEEPButton.Enable = 'On';
+            end
+        end
     end
 
     % Component initialization
@@ -4431,6 +5609,7 @@ properties (Access = private)
             title(app.UIAxes, 'PL MAP')
             xlabel(app.UIAxes, 'X')
             ylabel(app.UIAxes, 'Y')
+            app.UIAxes.PlotBoxAspectRatio = [1.26291079812207 1 1];
             app.UIAxes.FontSize = 16;
             app.UIAxes.FontWeight = 'bold';
             app.UIAxes.Box = 'on';
@@ -4986,10 +6165,247 @@ properties (Access = private)
             app.SaveCoordsButton.FontColor = [0.149 0.149 0.149];
             app.SaveCoordsButton.Position = [229.5 297 169 57];
 
-            % Create Tab
-            app.Tab = uitab(app.TabGroup);
-            app.Tab.Title = 'Tab';
-            app.Tab.BackgroundColor = [0.251 0.4 0.8196];
+            % Create CWTab
+            app.CWTab = uitab(app.TabGroup);
+            app.CWTab.Title = 'CW';
+            app.CWTab.BackgroundColor = [0.251 0.4 0.8196];
+
+            % Create PowerdBmEditField_2Label
+            app.PowerdBmEditField_2Label = uilabel(app.CWTab);
+            app.PowerdBmEditField_2Label.HorizontalAlignment = 'right';
+            app.PowerdBmEditField_2Label.FontSize = 18;
+            app.PowerdBmEditField_2Label.FontWeight = 'bold';
+            app.PowerdBmEditField_2Label.Position = [26 127 117 22];
+            app.PowerdBmEditField_2Label.Text = 'Power (dBm)';
+
+            % Create PowerdBmEditField_2
+            app.PowerdBmEditField_2 = uieditfield(app.CWTab, 'numeric');
+            app.PowerdBmEditField_2.Limits = [-35 -9];
+            app.PowerdBmEditField_2.ValueDisplayFormat = '%.3f';
+            app.PowerdBmEditField_2.ValueChangedFcn = createCallbackFcn(app, @PowerdBmEditField_2ValueChanged, true);
+            app.PowerdBmEditField_2.FontSize = 18;
+            app.PowerdBmEditField_2.FontWeight = 'bold';
+            app.PowerdBmEditField_2.Position = [158 126 100 23];
+            app.PowerdBmEditField_2.Value = -20;
+
+            % Create FreqGHzEditFieldLabel
+            app.FreqGHzEditFieldLabel = uilabel(app.CWTab);
+            app.FreqGHzEditFieldLabel.HorizontalAlignment = 'right';
+            app.FreqGHzEditFieldLabel.FontSize = 18;
+            app.FreqGHzEditFieldLabel.FontWeight = 'bold';
+            app.FreqGHzEditFieldLabel.Position = [26 178 97 22];
+            app.FreqGHzEditFieldLabel.Text = 'Freq (GHz)';
+
+            % Create FreqGHzEditField
+            app.FreqGHzEditField = uieditfield(app.CWTab, 'numeric');
+            app.FreqGHzEditField.Limits = [0.001 5.9];
+            app.FreqGHzEditField.ValueChangedFcn = createCallbackFcn(app, @FreqGHzEditFieldValueChanged, true);
+            app.FreqGHzEditField.FontSize = 18;
+            app.FreqGHzEditField.FontWeight = 'bold';
+            app.FreqGHzEditField.Position = [158 177 100 23];
+            app.FreqGHzEditField.Value = 2.87;
+
+            % Create RFSwitchLabel
+            app.RFSwitchLabel = uilabel(app.CWTab);
+            app.RFSwitchLabel.HorizontalAlignment = 'center';
+            app.RFSwitchLabel.FontSize = 24;
+            app.RFSwitchLabel.FontWeight = 'bold';
+            app.RFSwitchLabel.Position = [381 133 37 30];
+            app.RFSwitchLabel.Text = 'RF';
+
+            % Create RFSwitch
+            app.RFSwitch = uiswitch(app.CWTab, 'toggle');
+            app.RFSwitch.ValueChangedFcn = createCallbackFcn(app, @RFSwitchValueChanged, true);
+            app.RFSwitch.Enable = 'off';
+            app.RFSwitch.FontSize = 24;
+            app.RFSwitch.FontWeight = 'bold';
+            app.RFSwitch.Position = [340 110 34 77];
+
+            % Create DISCONNECTMWButton
+            app.DISCONNECTMWButton = uibutton(app.CWTab, 'push');
+            app.DISCONNECTMWButton.ButtonPushedFcn = createCallbackFcn(app, @DISCONNECTMWButtonPushed, true);
+            app.DISCONNECTMWButton.BackgroundColor = [0.651 0.1412 0.1686];
+            app.DISCONNECTMWButton.FontSize = 18;
+            app.DISCONNECTMWButton.FontWeight = 'bold';
+            app.DISCONNECTMWButton.FontColor = [1 1 1];
+            app.DISCONNECTMWButton.Enable = 'off';
+            app.DISCONNECTMWButton.Position = [280 271 171 71];
+            app.DISCONNECTMWButton.Text = 'DISCONNECT MW';
+
+            % Create CONNECTMWButton
+            app.CONNECTMWButton = uibutton(app.CWTab, 'state');
+            app.CONNECTMWButton.ValueChangedFcn = createCallbackFcn(app, @CONNECTMWButtonValueChanged, true);
+            app.CONNECTMWButton.Text = 'CONNECT MW';
+            app.CONNECTMWButton.BackgroundColor = [0 0 0];
+            app.CONNECTMWButton.FontSize = 18;
+            app.CONNECTMWButton.FontWeight = 'bold';
+            app.CONNECTMWButton.FontColor = [1 1 1];
+            app.CONNECTMWButton.Position = [63 271 171 71];
+
+            % Create LampMW
+            app.LampMW = uilamp(app.CWTab);
+            app.LampMW.Enable = 'off';
+            app.LampMW.Position = [19 341 20 20];
+
+            % Create ESRTab
+            app.ESRTab = uitab(app.TabGroup);
+            app.ESRTab.Title = 'ESR';
+            app.ESRTab.BackgroundColor = [0.251 0.4 0.8196];
+
+            % Create SWEEPButton
+            app.SWEEPButton = uibutton(app.ESRTab, 'state');
+            app.SWEEPButton.ValueChangedFcn = createCallbackFcn(app, @SWEEPButtonValueChanged, true);
+            app.SWEEPButton.Enable = 'off';
+            app.SWEEPButton.Text = 'SWEEP';
+            app.SWEEPButton.BackgroundColor = [0 0 0];
+            app.SWEEPButton.FontSize = 18;
+            app.SWEEPButton.FontWeight = 'bold';
+            app.SWEEPButton.FontColor = [1 1 1];
+            app.SWEEPButton.Position = [324 282 171 71];
+
+            % Create FreqStartGHzEditFieldLabel
+            app.FreqStartGHzEditFieldLabel = uilabel(app.ESRTab);
+            app.FreqStartGHzEditFieldLabel.HorizontalAlignment = 'right';
+            app.FreqStartGHzEditFieldLabel.FontSize = 18;
+            app.FreqStartGHzEditFieldLabel.FontWeight = 'bold';
+            app.FreqStartGHzEditFieldLabel.Position = [12 331 144 22];
+            app.FreqStartGHzEditFieldLabel.Text = 'Freq Start (GHz)';
+
+            % Create FreqStartGHzEditField
+            app.FreqStartGHzEditField = uieditfield(app.ESRTab, 'numeric');
+            app.FreqStartGHzEditField.Limits = [0.0001 5.9];
+            app.FreqStartGHzEditField.FontSize = 18;
+            app.FreqStartGHzEditField.FontWeight = 'bold';
+            app.FreqStartGHzEditField.Position = [171 330 100 23];
+            app.FreqStartGHzEditField.Value = 2.8;
+
+            % Create FreqStopGHzEditFieldLabel
+            app.FreqStopGHzEditFieldLabel = uilabel(app.ESRTab);
+            app.FreqStopGHzEditFieldLabel.HorizontalAlignment = 'right';
+            app.FreqStopGHzEditFieldLabel.FontSize = 18;
+            app.FreqStopGHzEditFieldLabel.FontWeight = 'bold';
+            app.FreqStopGHzEditFieldLabel.Position = [14 288 142 22];
+            app.FreqStopGHzEditFieldLabel.Text = 'Freq Stop (GHz)';
+
+            % Create FreqStopGHzEditField
+            app.FreqStopGHzEditField = uieditfield(app.ESRTab, 'numeric');
+            app.FreqStopGHzEditField.Limits = [0.0001 5.9];
+            app.FreqStopGHzEditField.FontSize = 18;
+            app.FreqStopGHzEditField.FontWeight = 'bold';
+            app.FreqStopGHzEditField.Position = [171 287 100 23];
+            app.FreqStopGHzEditField.Value = 2.9;
+
+            % Create DTimemsEditFieldLabel
+            app.DTimemsEditFieldLabel = uilabel(app.ESRTab);
+            app.DTimemsEditFieldLabel.HorizontalAlignment = 'right';
+            app.DTimemsEditFieldLabel.FontSize = 18;
+            app.DTimemsEditFieldLabel.FontWeight = 'bold';
+            app.DTimemsEditFieldLabel.Position = [15 159 113 22];
+            app.DTimemsEditFieldLabel.Text = 'D. Time (ms)';
+
+            % Create DTimemsEditField
+            app.DTimemsEditField = uieditfield(app.ESRTab, 'numeric');
+            app.DTimemsEditField.Limits = [0.05 9000000];
+            app.DTimemsEditField.FontSize = 18;
+            app.DTimemsEditField.FontWeight = 'bold';
+            app.DTimemsEditField.Position = [143 158 100 23];
+            app.DTimemsEditField.Value = 50;
+
+            % Create PointsEditFieldLabel
+            app.PointsEditFieldLabel = uilabel(app.ESRTab);
+            app.PointsEditFieldLabel.HorizontalAlignment = 'right';
+            app.PointsEditFieldLabel.FontSize = 18;
+            app.PointsEditFieldLabel.FontWeight = 'bold';
+            app.PointsEditFieldLabel.Position = [15 131 61 22];
+            app.PointsEditFieldLabel.Text = 'Points';
+
+            % Create PointsEditField
+            app.PointsEditField = uieditfield(app.ESRTab, 'numeric');
+            app.PointsEditField.Limits = [1 9990];
+            app.PointsEditField.FontSize = 18;
+            app.PointsEditField.FontWeight = 'bold';
+            app.PointsEditField.Position = [143 130 100 23];
+            app.PointsEditField.Value = 50;
+
+            % Create RepetitionsEditFieldLabel
+            app.RepetitionsEditFieldLabel = uilabel(app.ESRTab);
+            app.RepetitionsEditFieldLabel.HorizontalAlignment = 'right';
+            app.RepetitionsEditFieldLabel.FontSize = 18;
+            app.RepetitionsEditFieldLabel.FontWeight = 'bold';
+            app.RepetitionsEditFieldLabel.Position = [15 102 104 22];
+            app.RepetitionsEditFieldLabel.Text = 'Repetitions';
+
+            % Create RepetitionsEditField
+            app.RepetitionsEditField = uieditfield(app.ESRTab, 'numeric');
+            app.RepetitionsEditField.FontSize = 18;
+            app.RepetitionsEditField.FontWeight = 'bold';
+            app.RepetitionsEditField.Position = [143 102 100 23];
+            app.RepetitionsEditField.Value = 2;
+
+            % Create CyclesEditFieldLabel
+            app.CyclesEditFieldLabel = uilabel(app.ESRTab);
+            app.CyclesEditFieldLabel.HorizontalAlignment = 'right';
+            app.CyclesEditFieldLabel.FontSize = 18;
+            app.CyclesEditFieldLabel.FontWeight = 'bold';
+            app.CyclesEditFieldLabel.Position = [15 73 64 22];
+            app.CyclesEditFieldLabel.Text = 'Cycles';
+
+            % Create CyclesEditField
+            app.CyclesEditField = uieditfield(app.ESRTab, 'numeric');
+            app.CyclesEditField.FontSize = 18;
+            app.CyclesEditField.FontWeight = 'bold';
+            app.CyclesEditField.Position = [143 73 100 23];
+            app.CyclesEditField.Value = 1;
+
+            % Create PowerdBmEditFieldLabel
+            app.PowerdBmEditFieldLabel = uilabel(app.ESRTab);
+            app.PowerdBmEditFieldLabel.HorizontalAlignment = 'right';
+            app.PowerdBmEditFieldLabel.FontSize = 18;
+            app.PowerdBmEditFieldLabel.FontWeight = 'bold';
+            app.PowerdBmEditFieldLabel.Position = [15 247 117 22];
+            app.PowerdBmEditFieldLabel.Text = 'Power (dBm)';
+
+            % Create PowerdBmEditField
+            app.PowerdBmEditField = uieditfield(app.ESRTab, 'numeric');
+            app.PowerdBmEditField.Limits = [-35 -9];
+            app.PowerdBmEditField.ValueDisplayFormat = '%.3f';
+            app.PowerdBmEditField.ValueChangedFcn = createCallbackFcn(app, @PowerdBmEditFieldValueChanged, true);
+            app.PowerdBmEditField.FontSize = 18;
+            app.PowerdBmEditField.FontWeight = 'bold';
+            app.PowerdBmEditField.Position = [171 246 100 23];
+            app.PowerdBmEditField.Value = -20;
+
+            % Create STOPSWEEPButton
+            app.STOPSWEEPButton = uibutton(app.ESRTab, 'push');
+            app.STOPSWEEPButton.ButtonPushedFcn = createCallbackFcn(app, @STOPSWEEPButtonPushed, true);
+            app.STOPSWEEPButton.BackgroundColor = [0.651 0.1412 0.1686];
+            app.STOPSWEEPButton.FontSize = 18;
+            app.STOPSWEEPButton.FontWeight = 'bold';
+            app.STOPSWEEPButton.FontColor = [1 1 1];
+            app.STOPSWEEPButton.Enable = 'off';
+            app.STOPSWEEPButton.Position = [327 107 171 71];
+            app.STOPSWEEPButton.Text = 'STOP SWEEP';
+
+            % Create SAVESWEEPButton
+            app.SAVESWEEPButton = uibutton(app.ESRTab, 'push');
+            app.SAVESWEEPButton.ButtonPushedFcn = createCallbackFcn(app, @SAVESWEEPButtonPushed, true);
+            app.SAVESWEEPButton.BackgroundColor = [1 0.7608 0.051];
+            app.SAVESWEEPButton.FontSize = 18;
+            app.SAVESWEEPButton.FontWeight = 'bold';
+            app.SAVESWEEPButton.FontColor = [0.149 0.149 0.149];
+            app.SAVESWEEPButton.Enable = 'off';
+            app.SAVESWEEPButton.Position = [327 201 171 71];
+            app.SAVESWEEPButton.Text = 'SAVE SWEEP';
+
+            % Create LOADSWEEPButton
+            app.LOADSWEEPButton = uibutton(app.ESRTab, 'state');
+            app.LOADSWEEPButton.ValueChangedFcn = createCallbackFcn(app, @LOADSWEEPButtonValueChanged, true);
+            app.LOADSWEEPButton.Text = 'LOAD SWEEP';
+            app.LOADSWEEPButton.BackgroundColor = [0.9608 0.9608 0.9608];
+            app.LOADSWEEPButton.FontSize = 18;
+            app.LOADSWEEPButton.FontWeight = 'bold';
+            app.LOADSWEEPButton.FontColor = [0.1294 0.1294 0.1294];
+            app.LOADSWEEPButton.Position = [324 24 171 71];
 
             % Create STDC2EditFieldLabel
             app.STDC2EditFieldLabel = uilabel(app.Panel_3);
